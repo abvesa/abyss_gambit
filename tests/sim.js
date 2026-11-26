@@ -12,7 +12,7 @@ function check(S) {
     if (seen.has(k)) throw new Error('overlap @' + k + ' ' + who);
     seen.add(k);
   };
-  if (S.phase !== 'reward' && S.phase !== 'dead') put(S.player.x, S.player.y, 'player');
+  if (!['reward', 'dead', 'draft', 'door'].includes(S.phase)) put(S.player.x, S.player.y, 'player');
   for (const e of S.enemies) { if (e.dead) throw new Error('dead enemy kept'); put(e.x, e.y, e.type); }
   if (S.hp > S.maxHp) throw new Error('hp > max');
   const all = [...S.hand, ...S.draw, ...S.discard].sort((a, b) => a - b);
@@ -23,7 +23,13 @@ function check(S) {
 function actions(S) {
   const out = E.canWait(S) ? [{ hi: -1 }] : [];
   S.hand.forEach((_, hi) => E.legalTargets(S, hi).forEach((t) => out.push({ hi, x: t.x, y: t.y })));
+  (S.skills || []).forEach((_, si) => E.skillTargets(S, si).forEach((t) => out.push({ hi: { si }, x: t.x, y: t.y })));
   return out;
+}
+function act(S, a) {
+  if (a.hi === -1) return E.waitTurn(S);
+  if (typeof a.hi === 'object') return E.useSkill(S, a.hi.si, a.x, a.y);
+  return E.playCard(S, a.hi, a.x, a.y);
 }
 
 function evalAction(S, a) {
@@ -60,13 +66,17 @@ function evalAction1(S, a) {
 }
 
 const CAP = +process.argv[3] || 15;
-function runOne(seed, smart, hero) {
-  const S = E.newRun({ seed, hero });
+function runOne(seed, smart, hero, build) {
+  const S = build ? E.newRun({ seed, mode: 'endless', build }) : E.newRun({ seed, hero });
   let steps = 0;
   while (steps++ < 4000) {
     check(S);
     if (S.phase === 'dead') return S;
-    if (S.phase === 'reward') {
+    if (S.phase === 'door') {
+      if (!E.chooseDoor(S, Math.floor(Math.random() * S.doors.length))) throw new Error('door failed');
+      continue;
+    }
+    if (S.phase === 'reward' || S.phase === 'draft') {
       if (S.floor >= CAP) return S;
       const i = Math.floor(Math.random() * S.rewards.length);
       const o = S.rewards[i];
@@ -82,7 +92,7 @@ function runOne(seed, smart, hero) {
       let best = -Infinity;
       for (const b of acts) { const v = evalAction(S, b); if (v > best) { best = v; a = b; } }
     } else a = acts[Math.floor(Math.random() * acts.length)];
-    const ev = a.hi < 0 ? E.waitTurn(S) : E.playCard(S, a.hi, a.x, a.y);
+    const ev = act(S, a);
     if (!ev) throw new Error('action rejected ' + JSON.stringify(a));
     if (S.turn > 80) return S; // 卡關保護
   }
@@ -90,6 +100,26 @@ function runOne(seed, smart, hero) {
 }
 
 const N = +process.argv[2] || 60;
+const BUILDS = {
+  base: { hp: 5, hand: 0, undo: 0, deck: [['king', false], ['king', false], ['knight', false], ['rook', false], ['bishop', false]], relics: [], skills: ['redraw'], start: 1 },
+  strong: { hp: 8, hand: 1, undo: 1, deck: [['king', true], ['knight', true], ['knight', false], ['rook', true], ['bishop', true], ['queen', false], ['lance', false]], relics: ['spark', 'bell'], skills: ['blink', 'seal'], start: 11 },
+};
+if (process.argv[4] === 'tower') {
+  for (const [name, b] of Object.entries(BUILDS)) {
+    const floors = []; let stuck = 0; const t0 = Date.now();
+    for (let i = 0; i < Math.ceil(N / 3); i++) {
+      const S = runOne(3000 + i * 7919, true, null, JSON.parse(JSON.stringify(b)));
+      if (S.turn > 80) stuck++;
+      floors.push(S.floor);
+    }
+    floors.sort((a, b) => a - b);
+    console.log('tower', name, 'median', floors[floors.length >> 1], 'min', floors[0], 'max', floors[floors.length - 1], 'stuck', stuck, JSON.stringify(floors), (Date.now() - t0) + 'ms');
+  }
+  const rf = [];
+  for (let i = 0; i < N; i++) rf.push(runOne(5000 + i, false, null, JSON.parse(JSON.stringify(BUILDS.strong))).floor);
+  console.log('tower random strong', JSON.stringify(rf));
+  process.exit(0);
+}
 for (const [label, smart] of [['random', false], ['greedy', true]]) {
   for (const hero of smart ? ['ranger', 'shade', 'warden', 'master'] : ['ranger']) {
     const floors = []; let t0 = Date.now(); const scores = []; let stuck = 0;

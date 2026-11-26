@@ -17,7 +17,8 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 無法存檔時照常遊玩 */ } },
     del(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } },
   };
-  const meta = Object.assign({ best: 0, bestFloor: 0, runs: 0, wins: 0, unlocked: ['ranger'], daily: {}, seenHelp: false, sound: true, fast: false, hero: 'ranger' }, store.get(META_KEY) || {});
+  const meta = Object.assign({ best: 0, bestFloor: 0, runs: 0, wins: 0, unlocked: ['ranger'], daily: {}, seenHelp: false, sound: true, fast: false, hero: 'ranger',
+    shards: 0, towerUnl: [], towerBest: 0, towerRuns: 0, towerHist: [], build: null }, store.get(META_KEY) || {});
   const saveMeta = () => store.set(META_KEY, meta);
   const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 
@@ -91,7 +92,11 @@
   let S = null;            // 目前這一局
   let demo = true;         // 標題畫面後面的示範盤面
   let hist = [];           // 回溯用快照
-  let sel = -1, hover = null, pendingTap = null, focusUid = null, curPreview = null;
+  let sel = -1, selSkill = -1, hover = null, pendingTap = null, focusUid = null, curPreview = null;
+  // 目前選到的是手牌還是技能
+  const actionTargets = () => (selSkill >= 0 ? E.skillTargets(S, selSkill) : sel >= 0 ? E.legalTargets(S, sel) : []);
+  const actionArg = () => (selSkill >= 0 ? { si: selSkill } : sel);
+  const hasSel = () => sel >= 0 || selSkill >= 0;
   let busy = false, runRecorded = false, dispHp = 0, comboKills = 0, animBase = null;
   const touch = window.matchMedia && matchMedia('(hover: none)').matches;
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -115,12 +120,15 @@
       const t = X.tiles[i];
       let cls = 'cell ' + (t === '#' ? 'w' : t === 'o' ? 'p' : 'f') + (((x + y) & 1) ? ' alt' : '');
       let html = '';
+      const fog = E.hasMod(X, 'dark') && Math.max(Math.abs(x - X.player.x), Math.abs(y - X.player.y)) > 2;
+      if (fog) cls += ' fog';
+      if (t === '.' && X.fire && X.fire.includes(i)) cls += ' fire';
       if (t === '.') {
         const sp = X.spawns.find((s) => s.x === x && s.y === y);
         if (sp) { cls += ' spawn'; html += `<span class="sp-ring"></span><span class="sp-ico">${E.ENEMIES[sp.type].icon}</span>`; }
         if (X.cracks && X.cracks.some((k) => k.x === x && k.y === y)) cls += ' crack';
       }
-      if (thr) {
+      if (thr && !fog) {
         const T = thr[i];
         if (T.dmg > 0) { cls += ' thr'; html += `<i class="dmg">${T.dmg}</i>`; }
         else if (T.path) cls += ' path';
@@ -151,7 +159,7 @@
   }
   function enemyHTML(type) {
     const d = E.ENEMIES[type];
-    return `<div class="disc"><span class="ico">${d.icon}</span></div><div class="pips"></div><div class="badge" hidden></div>`;
+    return `<div class="disc"><span class="ico">${d.icon}</span></div><div class="pips"></div><div class="badge" hidden></div><div class="affx"></div>`;
   }
   function makeEnemyEl(uid, type, x, y) {
     const n = mk('div', 'piece enemy t-' + type, enemyHTML(type));
@@ -190,7 +198,9 @@
       if (!n) n = makeEnemyEl(e.uid, e.type, e.x, e.y);
       else if (n._x !== e.x || n._y !== e.y) setPos(n, e.x, e.y);
       const d = E.ENEMIES[e.type];
-      let cls = 'piece enemy t-' + e.type + (e.elite ? ' elite' : '') + (d.boss ? ' boss' : '');
+      let cls = 'piece enemy t-' + e.type + (e.elite ? ' elite' : '') + (d.boss ? ' boss' : '') + (e.shield ? ' shielded' : '');
+      const ak = (e.affixes || []).join(',');
+      if (n._ak !== ak) { n._ak = ak; const ax = n.querySelector('.affx'); if (ax) ax.innerHTML = (e.affixes || []).map((a) => `<i>${E.AFFIXES[a].n}</i>`).join(''); }
       const T = threats && threats[E.idx(e.x, e.y)];
       if (T && T.dmg > 0 && T.src.some((u) => u !== e.uid)) cls += ' doomed';
       if (focusUid === e.uid) cls += ' focused';
@@ -226,13 +236,13 @@
   function refresh() {
     if (!S) return;
     const thr = E.computeThreats(S);
-    const targets = sel >= 0 && !busy ? E.legalTargets(S, sel) : [];
+    const targets = hasSel() && !busy ? actionTargets() : [];
     let X = S, th = thr;
     curPreview = null;
-    if (sel >= 0 && hover != null && !busy) {
+    if (hasSel() && hover != null && !busy) {
       const x = hover % W, y = (hover / W) | 0;
       if (targets.some((t) => t.x === x && t.y === y)) {
-        const p = E.preview(S, sel, x, y);
+        const p = E.preview(S, actionArg(), x, y);
         if (p) { curPreview = p; X = p.T; th = E.computeThreats(p.T); }
       }
     }
@@ -240,6 +250,7 @@
     renderPieces(thr, curPreview && curPreview.kills);
     renderGhosts(curPreview);
     renderHint();
+    renderSkills();
   }
 
   function renderHint() {
@@ -248,6 +259,7 @@
     else if (busy) s = S.phase === 'enemy' ? '敵方行動中……' : '';
     else if (S.phase !== 'player') s = '';
     else if (curPreview) { const r = previewText(curPreview); s = r.s; cls += ' ' + r.cls; }
+    else if (selSkill >= 0) s = `技能「${E.SKILLS[S.skills[selSkill].id].name}」：選擇目標。技能不會結束回合。` + (touch ? '點一下預覽，再點一次確認。' : '');
     else if (sel >= 0) s = `選擇「${E.CARDS[S.cards[S.hand[sel]].k].name}」的落點：綠點是移動，金圈是攻擊。` + (touch ? '點一下預覽，再點一次確認。' : '滑過去可以預覽結果。');
     else if (S.chain > 0) { s = `連鎖 ×${S.chain}！可以再出一張牌，或結束回合。`; cls += ' warn'; }
     else if (S.played > 0) s = '迅捷牌不會結束回合，可以繼續出牌或結束回合。';
@@ -262,7 +274,7 @@
     const kt = kills > 1 ? `擊殺 ${kills} 個！` : kills ? '擊殺！' : '';
     if (p.dead) return { cls: 'bad', s: '這一步會讓你倒下！' };
     if (p.cleared) return { cls: 'good', s: '✦ 這一步就能清空本層！' + (now > 0 ? `（受到 ${now} 傷害）` : '') };
-    if (p.cont) return { cls: now > 0 ? 'warn' : 'good', s: (kt ? kt + '可以再出一張牌' : '迅捷：出完還能再出一張') + (now > 0 ? ` · 受到 ${now} 傷害` : '') };
+    if (p.cont) return { cls: now > 0 ? 'warn' : 'good', s: (kt ? kt + '可以再出一張牌' : selSkill >= 0 ? '技能不會結束回合' : '迅捷：出完還能再出一張') + (now > 0 ? ` · 受到 ${now} 傷害` : '') };
     return { cls: total > 0 ? 'bad' : 'ok', s: (kt ? kt + ' ' : '') + '回合結束 · ' + (total > 0 ? `你會受到 ${total} 傷害` : (p.blocked ? '聖印會擋下這次傷害' : '這裡安全')) };
   }
 
@@ -325,6 +337,44 @@
     p.innerHTML = h;
   }
 
+  /* ---------- 技能列 ---------- */
+  function renderSkills() {
+    const box = $('#skills');
+    if (!S || demo || !S.skills || !S.skills.length) { if (box._h) { box.innerHTML = ''; box._h = ''; } return; }
+    const html = S.skills.map((sk, i) => {
+      const d = E.SKILLS[sk.id];
+      const usable = !busy && S.phase === 'player' && E.skillTargets(S, i).length > 0;
+      return `<button type="button" class="skill ${sk.left > 0 ? 'cd' : ''} ${usable ? '' : 'off'} ${selSkill === i ? 'sel' : ''}" data-si="${i}" title="${d.name}（冷卻 ${d.cd}）：${d.desc}"><kbd>${'QW'[i]}</kbd><span class="sk-n">${d.n}</span><span class="sk-name">${d.name}</span>${sk.left > 0 ? `<span class="sk-cd">${sk.left}</span>` : ''}</button>`;
+    }).join('');
+    if (box._h !== html) { box.innerHTML = html; box._h = html; }
+  }
+  $('#skills').addEventListener('click', (e) => { const b = e.target.closest('[data-si]'); if (b) selectSkill(+b.dataset.si); });
+  $('#skills').addEventListener('mouseover', (e) => {
+    const b = e.target.closest('[data-si]'); if (!b || !S) return;
+    const d = E.SKILLS[S.skills[+b.dataset.si].id];
+    infoEl.innerHTML = `<div class="info-head"><span class="info-ico relic-ico" style="background:#3a2d6e">${d.n}</span><div><b>${d.name}</b><small>技能 · 冷卻 ${d.cd} 回合</small></div></div><p>${d.desc}</p><p class="muted">技能不會結束回合，也不算「必須落子」的那一張牌。</p>`;
+  });
+  function selectSkill(i) {
+    if (!S || demo || busy || S.phase !== 'player' || !S.skills[i]) return;
+    const sk = S.skills[i];
+    if (sk.left > 0) { toast(`${E.SKILLS[sk.id].name}還要冷卻 ${sk.left} 回合`); return; }
+    const tg = E.skillTargets(S, i);
+    if (!tg.length) { toast('現在沒有可以用這個技能的目標'); return; }
+    // 只能對自己用的技能（重整、療傷、旋風）直接施放
+    if (tg.length === 1 && tg[0].kind === 'self') { doSkill(i, tg[0].x, tg[0].y); return; }
+    selSkill = selSkill === i ? -1 : i; sel = -1; pendingTap = null; focusUid = null;
+    Sfx.select(); refresh(); renderHand();
+  }
+  async function doSkill(si, x, y) {
+    if (busy) return;
+    const snap = JSON.stringify(S), turn = S.turn;
+    const ev = E.useSkill(S, si, x, y);
+    if (!ev) return;
+    hist.push({ snap, turn });
+    addLog(`技能 ${E.SKILLS[S.skills[si].id].name}` + (x === S.player.x && y === S.player.y ? '' : ` → ${coord(x, y)}`));
+    await runEvents(ev, JSON.parse(snap));
+  }
+
   /* ---------- HUD ---------- */
   function renderHearts(hp) {
     const el = $('#hp');
@@ -336,10 +386,13 @@
     if (!S) return;
     dispHp = S.hp;
     renderHearts(S.hp);
-    $('#floor').textContent = S.floor > 10 ? '無盡 ' + S.floor : S.floor + (S.boss ? ' 首領' : '');
+    $('#floor').textContent = (!isTower() && S.floor > 10 ? '無盡 ' : '') + S.floor + (S.boss ? ' 首領' : '');
+    $('#shardStat').hidden = !isTower() && !S.shards;
+    $('#shards').textContent = S.shards || 0;
+    $('#mods').innerHTML = (S.mods || []).map(modChip).join('');
     $('#turn').textContent = S.turn;
-    const collapsing = S.turn >= S.par;
-    $('#par').textContent = collapsing ? '崩塌中' : '/ ' + S.par;
+    const collapsing = S.turn >= E.collapseTurn(S);
+    $('#par').textContent = collapsing ? '崩塌中' : '/ ' + E.collapseTurn(S);
     $('#par').title = '在標準回合內清場可以多一個獎勵選項；超過後地面會開始崩塌';
     $('#turnStat').classList.toggle('collapse', collapsing);
     $('#score').textContent = S.score;
@@ -381,17 +434,18 @@
       case 'slam': return `準備重擊周圍 8 格（${it.dmg} 傷害）。`;
       case 'burst': return `即將自爆！周圍 8 格 ${it.dmg} 傷害。`;
       case 'summon': return '正在召喚爪牙（紫圈處）。';
-      case 'leap': return `將跳向 ${coord(it.x, it.y)}：落點 2 傷害、周圍 1 傷害。`;
+      case 'leap': return `將跳向 ${coord(it.x, it.y)}：落點 ${it.dmg || 2} 傷害、周圍 ${(it.dmg || 2) - 1} 傷害。`;
       case 'beam': return `準備射出四道${it.dirs[0][0] && it.dirs[0][1] ? '斜向' : '直向'}貫穿光束（${it.dmg} 傷害）。`;
     }
     return '';
   }
   function infoDefault() {
     if (!S || demo) { infoEl.innerHTML = ''; return; }
-    let h = `<h4>${S.boss ? '首領層' : S.floor > 10 ? '無盡深淵' : '第 ' + S.floor + ' 層'}</h4>`;
+    let h = `<h4>${isTower() ? `無盡之塔 · 第 ${S.floor} 層${S.boss ? '（首領）' : ''}` : S.boss ? '首領層' : S.floor > 10 ? '無盡深淵' : '第 ' + S.floor + ' 層'}</h4>`;
     const boss = S.enemies.find((e) => E.ENEMIES[e.type].boss);
     if (boss) h += `<p>${E.ENEMIES[boss.type].name}：${E.ENEMIES[boss.type].desc}</p>`;
     else h += `<p class="muted">敵人 ${S.enemies.length} · 增援 ${S.spawns.length + S.reserve.length}。滑過敵人看它的行為，滑過牌看它的走法。</p>`;
+    if (S.mods && S.mods.length) h += S.mods.map((m) => `<p>${modChip(m)} ${E.MODS[m].desc}</p>`).join('');
     h += `<div class="legend"><span><i class="lg thr"></i>敵人攻擊</span><span><i class="lg tg"></i>可移動</span><span><i class="lg ta"></i>可攻擊</span><span><i class="lg sp"></i>增援點</span><span><i class="lg cr"></i>即將崩塌</span><span><i class="lg pit"></i>深淵</span></div>`;
     infoEl.innerHTML = h;
   }
@@ -405,6 +459,8 @@
       const d = E.ENEMIES[e.type];
       h += `<div class="info-head"><span class="info-ico">${d.icon}</span><div><b>${d.name}${e.elite ? ' <em class="elite-tag">精英</em>' : ''}</b><small>${coord(x, y)} · 生命 ${e.hp}/${e.maxHp}</small></div></div><p>${d.desc}</p>`;
       if (e.elite) h += '<p class="muted">精英：生命 +1，攻擊傷害 +1。</p>';
+      for (const a of e.affixes || []) h += `<p><em class="elite-tag" style="background:var(--violet)">${E.AFFIXES[a].name}</em> ${E.AFFIXES[a].desc}${a === 'shield' && !e.shield ? '（已破）' : ''}</p>`;
+      if (e.dmgUp) h += `<p class="muted">高塔之力：攻擊傷害 +${e.dmgUp}。</p>`;
       h += `<p class="intent">${intentText(e)}</p>`;
     } else if (S.player.x === x && S.player.y === y) {
       h += `<div class="info-head"><span class="info-ico you">♚</span><div><b>你（${E.HEROES[S.hero].name}）</b><small>${coord(x, y)} · 生命 ${S.hp}/${S.maxHp}</small></div></div>`;
@@ -416,6 +472,7 @@
       const sp = S.spawns.find((s) => s.x === x && s.y === y);
       if (sp) h += `<p class="intent">增援點：回合結束時會出現${E.ENEMIES[sp.type].name}。站在上面可以擋下它，但會受到 1 傷害。</p>`;
       if (S.cracks.some((k) => k.x === x && k.y === y)) h += '<p style="color:var(--violet)">裂痕：回合結束時這格會崩塌成深淵，站在上面會受到 2 傷害。</p>';
+      if (S.fire && S.fire.includes(i)) h += '<p style="color:var(--ember)">灼地：回合結束時站在這裡的人（包括敵人）受 1 傷害。</p>';
     }
     if (thr && thr.dmg > 0) {
       const names = [...new Set(thr.src)].map((u) => { const z = S.enemies.find((q) => q.uid === u); return z ? E.ENEMIES[z.type].name : ''; }).filter(Boolean);
@@ -511,7 +568,8 @@
   }
   function floorBanner() {
     const boss = S.enemies.find((e) => E.ENEMIES[e.type].boss);
-    banner(S.floor > 10 ? '無盡深淵' : S.boss ? '首領層' : '深度', `第 ${S.floor} 層`, boss ? E.ENEMIES[boss.type].name : '');
+    const mods = (S.mods || []).map((m) => E.MODS[m].name).join('・');
+    banner(isTower() ? (S.boss ? '無盡之塔 · 首領' : '無盡之塔') : S.floor > 10 ? '無盡深淵' : S.boss ? '首領層' : '深度', `第 ${S.floor} 層`, boss ? E.ENEMIES[boss.type].name + (mods ? '・' + mods : '') : mods);
   }
   let toastT = 0;
   function toast(s) {
@@ -592,6 +650,8 @@
             const n = makeEnemyEl(e.uid, e.type, e.x, e.y);
             if (E.ENEMIES[e.type].boss) n.classList.add('boss');
             if (e.elite) n.classList.add('elite');
+            if (e.shield) n.classList.add('shielded');
+            if (e.affixes && e.affixes.length) { n._ak = e.affixes.join(','); n.querySelector('.affx').innerHTML = e.affixes.map((a) => `<i>${E.AFFIXES[a].n}</i>`).join(''); }
             renderPips(n, e.hp, e.hp);
             n.classList.add('spawning');
             Sfx.spawn();
@@ -660,8 +720,25 @@
           await sleep(320);
           break;
         }
-        case 'clear': Sfx.clear(); banner('清除', `第 ${e.floor} 層`, '深淵暫時安靜了'); await sleep(900); break;
+        case 'clear': Sfx.clear(); banner('清除', `第 ${e.floor} 層`, e.shards ? `魂晶 +${e.shards}` : '深淵暫時安靜了'); await sleep(900); break;
         case 'log': addLog(e.s); break;
+        case 'shield': {
+          const n = pieceEls.get(e.uid);
+          if (n) n.classList.remove('shielded');
+          floatText(e.x, e.y, '破盾', 'info'); Sfx.block(); await sleep(140);
+          break;
+        }
+        case 'eheal': {
+          const n = pieceEls.get(e.uid);
+          if (n) renderPips(n, (n._hp || 0) + 1, n._max || 1);
+          floatText(e.x, e.y, '+1', 'heal'); await sleep(60);
+          break;
+        }
+        case 'burn':
+          for (const [x, y] of e.tiles) tileFx(x, y, 'flash-o');
+          Sfx.enemyAtk('bomb'); await sleep(220);
+          break;
+        case 'skill': Sfx.blink(); await sleep(60); break;
       }
     }
   }
@@ -670,6 +747,7 @@
   function selectCard(i) {
     if (!S || demo || busy || S.phase !== 'player') return;
     if (i < 0 || i >= S.hand.length) return;
+    selSkill = -1;
     if (sel === i) sel = -1;
     else if (E.legalTargets(S, i).length) { sel = i; Sfx.select(); }
     else { toast('這張牌現在沒有可以走的位置'); return; }
@@ -685,27 +763,27 @@
     const i = +c.dataset.i;
     if (i === hover) return;
     hover = i;
-    if (sel < 0) { const x = i % W, y = (i / W) | 0; focusUid = enemyUidAt(x, y); showTileInfo(i); }
+    if (!hasSel()) { const x = i % W, y = (i / W) | 0; focusUid = enemyUidAt(x, y); showTileInfo(i); }
     refresh();
   });
   cellsEl.addEventListener('mouseleave', () => {
     if (touch || !S || demo) return;
     hover = null; focusUid = null;
-    if (!busy) { refresh(); if (sel < 0) infoDefault(); }
+    if (!busy) { refresh(); if (!hasSel()) infoDefault(); }
   });
   cellsEl.addEventListener('click', (ev) => {
     if (!S || demo || busy || S.phase !== 'player') return;
     const c = ev.target.closest('.cell'); if (!c) return;
     const i = +c.dataset.i, x = i % W, y = (i / W) | 0;
-    if (sel >= 0) {
-      const tg = E.legalTargets(S, sel).find((t) => t.x === x && t.y === y);
+    if (hasSel()) {
+      const tg = actionTargets().find((t) => t.x === x && t.y === y);
       if (!tg) {
-        sel = -1; pendingTap = null; hover = i; focusUid = enemyUidAt(x, y);
+        sel = -1; selSkill = -1; pendingTap = null; hover = i; focusUid = enemyUidAt(x, y);
         showTileInfo(i); refresh(); renderHand();
         return;
       }
       if (touch && pendingTap !== i) { pendingTap = i; hover = i; refresh(); return; }
-      doPlay(sel, x, y);
+      if (selSkill >= 0) doSkill(selSkill, x, y); else doPlay(sel, x, y);
     } else {
       hover = i; focusUid = enemyUidAt(x, y);
       showTileInfo(i); refresh();
@@ -733,11 +811,11 @@
     await runEvents(ev, JSON.parse(snap));
   }
   async function runEvents(ev, pre) {
-    busy = true; sel = -1; hover = null; pendingTap = null; focusUid = null; curPreview = null;
+    busy = true; sel = -1; selSkill = -1; hover = null; pendingTap = null; focusUid = null; curPreview = null;
     animBase = pre;
     document.body.classList.add('busy');
     ghostsEl.innerHTML = '';
-    renderHand(); renderHUD();
+    renderHand(); renderHUD(); renderSkills();
     // 動畫期間顯示動作「之前」的生命與地形，事件會一步步更新它們
     dispHp = pre.hp; renderHearts(pre.hp);
     renderMarks(pre, { threats: E.computeThreats(pre) }); renderHint();
@@ -750,7 +828,7 @@
   }
   function afterAction() {
     checkUnlocks();
-    if (S.phase === 'dead') { store.del(RUN_KEY); setTimeout(showGameOver, 350); Sfx.lose(); return; }
+    if (S.phase === 'dead') { finalizeRun(); setTimeout(showGameOver, 350); Sfx.lose(); return; }
     saveRun();
     if (S.phase === 'reward') {
       setTimeout(() => { if (S.justWon) showVictory(); else showReward(); }, 500);
@@ -762,10 +840,11 @@
     const cross = S.turn !== h.turn || S.phase === 'dead';
     if (cross && S.undoLeft <= 0) { toast('本層的回溯次數用完了（同一回合內收回永遠免費）'); return; }
     hist.pop();
+    if (S.phase === 'dead') unfinalizeRun();
     const left = S.undoLeft - (cross ? 1 : 0);
     S = JSON.parse(h.snap);
     S.undoLeft = left;
-    sel = -1; hover = null; pendingTap = null; focusUid = null;
+    sel = -1; selSkill = -1; hover = null; pendingTap = null; focusUid = null;
     closeOverlay(); rebuildPieces(); fullRender();
     addLog(cross ? '時光倒流：回到上一回合（消耗 1 次）' : '收回一步');
     Sfx.undo(); saveRun();
@@ -773,8 +852,15 @@
   function saveRun() { if (S && !demo && S.phase !== 'dead') store.set(RUN_KEY, { S }); }
 
   /* ---------- 解鎖與紀錄 ---------- */
+  const isTower = () => !!S && S.mode === 'endless';
+  const heroName = () => (isTower() ? '無盡之塔 · 自訂角色' : (E.HEROES[S.hero] || E.HEROES.ranger).name);
+  let runStartBest = 0, runStartScore = 0, preFinalMeta = null;
   function checkUnlocks() {
     if (!S || demo) return;
+    if (isTower()) {
+      if (['player', 'reward', 'dead'].includes(S.phase) && S.floor > meta.towerBest) { meta.towerBest = S.floor; saveMeta(); }
+      return;
+    }
     const un = (id) => {
       if (!meta.unlocked.includes(id)) { meta.unlocked.push(id); saveMeta(); toast('解鎖新角色：' + E.HEROES[id].name + '！'); }
     };
@@ -784,49 +870,132 @@
     if (S.floor > meta.bestFloor) { meta.bestFloor = S.floor; saveMeta(); }
   }
   function recordBest() {
-    let nb = false;
-    if (S.score > meta.best) { meta.best = S.score; nb = true; }
+    if (isTower()) { if (S.floor > meta.towerBest) meta.towerBest = S.floor; saveMeta(); return; }
+    if (S.score > meta.best) meta.best = S.score;
     if (S.floor > meta.bestFloor) meta.bestFloor = S.floor;
     if (S.daily) { const t = todayStr(); if (!meta.daily[t] || S.score > meta.daily[t]) meta.daily[t] = S.score; }
     saveMeta();
-    return nb;
   }
+  // 結算：魂晶存進工坊。死亡時立刻結算（關掉分頁也不會丟），從死亡畫面回溯時再還原
   function finalizeRun() {
     if (!S || demo || runRecorded) return;
+    preFinalMeta = JSON.stringify(meta);
     runRecorded = true;
-    meta.runs++;
-    if (S.won) meta.wins++;
+    meta.shards += S.shards || 0;
+    if (isTower()) {
+      meta.towerRuns++;
+      meta.towerHist.unshift({ floor: S.floor, shards: S.shards || 0, date: todayStr(), deck: S.deck.map((id) => E.CARDS[S.cards[id].k].n).join(''), skills: (S.skills || []).map((k) => E.SKILLS[k.id].n).join('') });
+      meta.towerHist = meta.towerHist.slice(0, 6);
+    } else { meta.runs++; if (S.won) meta.wins++; }
     recordBest();
     store.del(RUN_KEY);
     saveMeta();
   }
+  function unfinalizeRun() {
+    if (!runRecorded || !preFinalMeta) return;
+    const back = JSON.parse(preFinalMeta);
+    for (const k of Object.keys(meta)) delete meta[k];
+    Object.assign(meta, back);
+    saveMeta();
+    runRecorded = false; preFinalMeta = null;
+  }
+  // 開新局時，如果還有沒結束的存檔，把它賺到的魂晶存起來
+  function abandonSave() {
+    const sv = store.get(RUN_KEY);
+    if (sv && sv.S && sv.S.phase !== 'dead' && !(S === sv.S)) { meta.shards += sv.S.shards || 0; saveMeta(); }
+    store.del(RUN_KEY);
+  }
+
+  /* ---------- 工坊與解鎖狀態 ---------- */
+  const unl = (id) => meta.towerUnl.includes(id);
+  const cardOpen = (k) => E.TOWER.baseCards.includes(k) || unl('card:' + k);
+  const skillOpen = (id) => E.TOWER.baseSkills.includes(id) || unl('skill:' + id);
+  const relicOpen = (r) => E.TOWER.baseRelics.includes(r) || unl('relic:' + r);
+  function unlockState(u, shards) {
+    if (unl(u.id)) return 'own';
+    if (u.req && !unl(u.req)) return 'req';
+    if (u.best && meta.towerBest < u.best) return 'req';
+    return (shards != null ? shards : meta.shards) >= u.cost ? 'ok' : 'poor';
+  }
+  function nextUnlockHTML(shards) {
+    const cand = E.TOWER.unlocks.filter((u) => ['ok', 'poor'].includes(unlockState(u, shards))).sort((a, b) => a.cost - b.cost);
+    if (!cand.length) return '';
+    const ok = cand.filter((u) => unlockState(u, shards) === 'ok');
+    if (ok.length) return `<div class="next-unlock">魂晶 ${shards}：工坊裡有 ${ok.length} 項可以解鎖了，例如「${ok[ok.length - 1].name}」！</div>`;
+    return `<div class="next-unlock">再 ${cand[0].cost - shards} 魂晶就能解鎖「${cand[0].name}」。</div>`;
+  }
+  function unlockDesc(u) {
+    const [cat, key] = u.id.split(':');
+    if (u.desc) return u.desc;
+    if (cat === 'card') return '起始牌組可用：' + E.CARDS[key].desc;
+    if (cat === 'skill') return `技能（冷卻 ${E.SKILLS[key].cd}）：` + E.SKILLS[key].desc;
+    if (cat === 'relic') return '起始遺物可選：' + E.RELICS[key].desc;
+    return '';
+  }
+  function unlockIcon(u) {
+    const [cat, key] = u.id.split(':');
+    if (cat === 'card') return `<span class="pk-ico c-card">${E.CARDS[key].n}</span>`;
+    if (cat === 'skill') return `<span class="pk-ico c-skill">${E.SKILLS[key].n}</span>`;
+    if (cat === 'relic') return `<span class="pk-ico">${E.RELICS[key].icon}</span>`;
+    if (cat === 'start') return `<span class="pk-ico c-gold">${key}</span>`;
+    return `<span class="pk-ico c-gold">${u.id.startsWith('budget') ? '盤' : u.id === 'plus' ? '升' : u.id === 'slot2' ? '技' : '謀'}</span>`;
+  }
 
   /* ---------- 疊層畫面 ---------- */
   let overlayHandler = null, overlayClosable = false;
-  function openOverlay(html, handler, closable) {
+  function openOverlay(html, handler, closable, keepScroll) {
+    const st = keepScroll ? panel.scrollTop : 0;
     panel.innerHTML = html;
     overlayHandler = handler; overlayClosable = !!closable;
     overlay.hidden = false;
-    panel.scrollTop = 0;
-    const f = panel.querySelector('.btn.primary, button');
-    if (f && !touch) setTimeout(() => f.focus({ preventScroll: true }), 30);
+    panel.scrollTop = st;
+    if (!keepScroll) {
+      const f = panel.querySelector('.btn.primary, button');
+      if (f && !touch) setTimeout(() => f.focus({ preventScroll: true }), 30);
+    }
   }
   function closeOverlay() { overlay.hidden = true; overlayHandler = null; }
   panel.addEventListener('click', (e) => {
     const b = e.target.closest('[data-action]');
-    if (b && overlayHandler) overlayHandler(b.dataset.action, b.dataset);
+    if (b && overlayHandler && !b.disabled) overlayHandler(b.dataset.action, b.dataset);
   });
   overlay.addEventListener('click', (e) => { if (e.target === overlay && overlayClosable) closeOverlay(); });
 
   function statsHTML() {
     const st = S.stats;
-    const items = [['分數', S.score], ['到達深度', S.floor], ['擊殺', st.kills], ['借刀殺人', st.friendly], ['推落深淵', st.pit], ['最長連鎖', st.bestChain], ['總回合', st.turns], ['擋下增援', st.blocked]];
+    const items = isTower()
+      ? [['到達樓層', S.floor], ['魂晶', S.shards || 0], ['擊殺', st.kills], ['借刀殺人', st.friendly], ['推落深淵', st.pit], ['最長連鎖', st.bestChain], ['總回合', st.turns], ['分數', S.score]]
+      : [['分數', S.score], ['到達深度', S.floor], ['擊殺', st.kills], ['借刀殺人', st.friendly], ['推落深淵', st.pit], ['最長連鎖', st.bestChain], ['總回合', st.turns], ['魂晶', S.shards || 0]];
     return `<div class="stat-grid">${items.map(([k, v]) => `<div><b>${v}</b><small>${k}</small></div>`).join('')}</div>`;
   }
 
   function showTitle() {
     const saved = store.get(RUN_KEY);
-    const hasSave = saved && saved.S && saved.S.phase !== 'dead';
+    const sv = saved && saved.S && saved.S.phase !== 'dead' ? saved.S : null;
+    const svLabel = sv ? (sv.mode === 'endless' ? `繼續 · 無盡之塔 第 ${sv.floor} 層` : `繼續 · 故事模式 第 ${sv.floor} 層`) : '';
+    openOverlay(`<div class="title">
+      <div class="logo">棋淵</div>
+      <div class="logo-sub">ABYSS GAMBIT</div>
+      <p class="tagline">手上的每張牌都是一種棋步。擊殺換來下一步，借刀殺人換來生路。</p>
+      ${sv ? `<div class="title-actions" style="margin-bottom:16px"><button type="button" class="btn primary big" data-action="resume">${svLabel}</button></div>` : ''}
+      <div class="modes">
+        <button type="button" class="mode story" data-action="story"><span class="m-eye">STORY</span><span class="m-name">故事模式</span>
+          <span class="m-desc">選一位英雄，挑戰十層棋淵與兩位首領。也有每天換一次地圖的每日挑戰。</span>
+          <span class="m-rec">最高分 <b>${meta.best}</b> · 通關 <b>${meta.wins}</b> 次</span></button>
+        <button type="button" class="mode tower" data-action="tower"><span class="m-eye">ENDLESS</span><span class="m-name">無盡之塔</span>
+          <span class="m-desc">自訂角色的能力、技能、遺物與牌組，看你的構築能爬多高。每次攀登都會帶回魂晶。</span>
+          <span class="m-rec">最高 <b>第 ${meta.towerBest} 層</b> · 魂晶 <b>${meta.shards}</b></span></button>
+      </div>
+      <div class="title-actions"><button type="button" class="btn ghost" data-action="help">規則</button></div>
+    </div>`, (a) => {
+      if (a === 'resume') resumeGame(sv);
+      if (a === 'story') showStory();
+      if (a === 'tower') showTower();
+      if (a === 'help') showHelp(showTitle);
+    });
+  }
+
+  function showStory() {
     if (!meta.unlocked.includes(meta.hero)) meta.hero = 'ranger';
     const heroes = Object.entries(E.HEROES).map(([id, h]) => {
       const locked = !meta.unlocked.includes(id);
@@ -838,24 +1007,143 @@
     }).join('');
     const dailyBest = meta.daily[todayStr()];
     openOverlay(`<div class="title">
-      <div class="logo">棋淵</div>
-      <div class="logo-sub">ABYSS GAMBIT</div>
-      <p class="tagline">手上的每張牌都是一種棋步。擊殺換來下一步，借刀殺人換來生路。</p>
+      <div class="toprow"><button type="button" class="btn ghost" data-action="back">← 返回</button><span class="grow"></span></div>
+      <div class="eyebrow">Story</div><h2>故事模式</h2>
+      <p class="tagline">十層棋淵，第 5 與第 10 層有首領。英雄會隨著進度解鎖。</p>
       <div class="heroes">${heroes}</div>
       <div class="title-actions">
-        ${hasSave ? `<button type="button" class="btn primary big" data-action="resume">繼續 · 第 ${saved.S.floor} 層</button>` : ''}
-        <button type="button" class="btn ${hasSave ? '' : 'primary'} big" data-action="start">${hasSave ? '放棄並重新開始' : '開始下淵'}</button>
+        <button type="button" class="btn primary big" data-action="start">開始下淵</button>
         <button type="button" class="btn big" data-action="daily">每日挑戰 · ${todayStr().slice(5).replace('-', '/')}</button>
-        <button type="button" class="btn ghost big" data-action="help">規則</button>
       </div>
       <div class="records"><span>最高分 <b>${meta.best}</b></span><span>最深 <b>第 ${meta.bestFloor || 0} 層</b></span><span>已下淵 <b>${meta.runs}</b> 次</span><span>通關 <b>${meta.wins}</b></span>${dailyBest != null ? `<span>今日挑戰 <b>${dailyBest}</b></span>` : ''}</div>
     </div>`, (a, d) => {
-      if (a === 'hero') { if (!meta.unlocked.includes(d.id)) { toast('尚未解鎖：' + E.HEROES[d.id].unlock); return; } meta.hero = d.id; saveMeta(); Sfx.select(); showTitle(); }
+      if (a === 'back') showTitle();
+      if (a === 'hero') { if (!meta.unlocked.includes(d.id)) { toast('尚未解鎖：' + E.HEROES[d.id].unlock); return; } meta.hero = d.id; saveMeta(); Sfx.select(); showStory(); }
       if (a === 'start') newGame({ hero: meta.hero, seed: (Math.random() * 2 ** 32) >>> 0 });
       if (a === 'daily') newGame({ hero: 'ranger', seed: E.hashStr('qiyuan-' + todayStr()), daily: true });
-      if (a === 'resume') resumeGame(saved.S);
-      if (a === 'help') showHelp(showTitle);
     });
+  }
+
+  /* ---------- 命盤（自訂角色） ---------- */
+  const defaultBuild = () => ({ hp: 5, hand: 0, undo: 0, deck: [['king', false], ['king', false], ['knight', false], ['rook', false], ['bishop', false]], relics: [], skills: ['redraw'], start: 1 });
+  let bd = null;
+  function sanitizeBuild(b0) {
+    const b = Object.assign(defaultBuild(), JSON.parse(JSON.stringify(b0 || {})));
+    b.deck = (b.deck || []).filter(([k]) => E.CARDS[k] && cardOpen(k)).map(([k, p]) => [k, !!p && unl('plus')]);
+    b.relics = (b.relics || []).filter((r) => E.RELICS[r] && relicOpen(r));
+    b.skills = (b.skills || []).filter((id) => E.SKILLS[id] && skillOpen(id)).slice(0, unl('slot2') ? 2 : 1);
+    b.hand = unl('hand') && b.hand ? 1 : 0;
+    b.hp = Math.max(E.TOWER.baseHp, Math.min(E.TOWER.maxHp, b.hp | 0));
+    b.undo = Math.max(0, Math.min(E.TOWER.maxUndo, b.undo | 0));
+    if (b.start > 1 && !unl('start:' + b.start)) b.start = 1;
+    return b;
+  }
+  function saveBuild() { meta.build = bd; saveMeta(); }
+  function showTower(keep) {
+    bd = sanitizeBuild(bd || meta.build);
+    const T = E.TOWER;
+    const budget = E.budgetOf(meta.towerUnl), cost = E.buildCost(bd);
+    const errs = E.validateBuild(bd, meta.towerUnl);
+    const slots = unl('slot2') ? 2 : 1;
+    const stepper = (k, label, sub, val, canDec, canInc, locked) => `<div class="stepper ${locked ? 'locked' : ''}"><div class="st-l">${label}<small>${sub}</small></div><button type="button" data-action="dec" data-k="${k}" ${canDec ? '' : 'disabled'} aria-label="減少">−</button><b>${val}</b><button type="button" data-action="inc" data-k="${k}" ${canInc ? '' : 'disabled'} aria-label="增加">+</button></div>`;
+    const stats = [
+      stepper('hp', '生命上限', `每 +1 花 ${T.hpCost} 點（基礎 ${T.baseHp}）`, bd.hp, bd.hp > T.baseHp, bd.hp < T.maxHp),
+      stepper('undo', '每層回溯', `每 +1 花 ${T.undoCost} 點`, 1 + bd.undo, bd.undo > 0, bd.undo < T.maxUndo),
+      stepper('hand', '手牌上限', unl('hand') ? `+1 花 ${T.handCost} 點` : '工坊解鎖「多謀」後可調整', 3 + bd.hand, bd.hand > 0, unl('hand') && !bd.hand, !unl('hand')),
+    ].join('');
+    const skills = Object.entries(E.SKILLS).map(([id, d]) => {
+      const open = skillOpen(id), on = bd.skills.includes(id);
+      return `<button type="button" class="pick sk ${on ? 'on' : ''} ${open ? '' : 'locked'}" data-action="skill" data-id="${id}"><span class="pk-ico">${d.n}</span><span class="pk-t"><b>${d.name}<span class="cost">${d.cost} 點</span></b><small>${open ? `冷卻 ${d.cd} · ${d.desc}` : '工坊解鎖'}</small></span></button>`;
+    }).join('');
+    const openRelics = Object.keys(E.RELICS).filter(relicOpen);
+    const relics = openRelics.map((r) => {
+      const d = E.RELICS[r], on = bd.relics.includes(r);
+      return `<button type="button" class="pick ${on ? 'on' : ''}" data-action="relic" data-id="${r}"><span class="pk-ico">${d.icon}</span><span class="pk-t"><b>${d.name}<span class="cost">${T.relicCost} 點</span></b><small>${d.desc}</small></span></button>`;
+    }).join('');
+    const lockedRelics = Object.keys(E.RELICS).length - openRelics.length;
+    const deck = bd.deck.map(([k, plus], i) => `<div class="dcard"><button type="button" class="card r${E.CARDS[k].r}${plus ? ' plus' : ''}" data-action="rm" data-i="${i}" title="點一下移除">${cardHTML({ k, plus })}</button><button type="button" class="x" data-action="rm" data-i="${i}" aria-label="移除">×</button>${unl('plus') ? `<button type="button" class="pl ${plus ? 'on' : ''}" data-action="plus" data-i="${i}">${plus ? '已升級' : '升級 +1'}</button>` : ''}</div>`).join('');
+    const palette = Object.keys(E.CARDS).map((k) => {
+      const d = E.CARDS[k], open = cardOpen(k);
+      return `<button type="button" class="pick cd ${open ? '' : 'locked'}" data-action="add" data-k="${k}"><span class="pk-ico">${d.n}</span><span class="pk-t"><b>${d.name}<span class="cost">${T.cardCost[d.r]} 點</span></b><small>${open ? d.desc : '工坊解鎖'}</small></span></button>`;
+    }).join('');
+    const starts = T.starts.filter((f) => f === 1 || unl('start:' + f)).map((f) => `<button type="button" class="pick ${bd.start === f ? 'on' : ''}" data-action="start" data-f="${f}"><span class="pk-ico c-gold">${f}</span><span class="pk-t"><b>第 ${f} 層</b><small>${f === 1 ? '從頭開始' : `先挑 ${E.draftPicks(f)} 次補給`}</small></span></button>`).join('');
+    const hist = meta.towerHist.length ? `<div class="history">${meta.towerHist.map((h) => `<span><b>第 ${h.floor} 層</b> · +${h.shards} 魂晶 · ${h.deck}${h.skills ? ' · 技 ' + h.skills : ''} · ${h.date.slice(5)}</span>`).join('')}</div>` : '<p class="muted" style="margin:0">還沒有攀登紀錄。</p>';
+    const html = `<div class="builder">
+      <div class="toprow"><button type="button" class="btn ghost" data-action="back">← 返回</button><h2>命盤</h2><span class="grow"></span><span class="shard-pill">魂晶 ${meta.shards}</span><button type="button" class="btn" data-action="shop">魂晶工坊</button></div>
+      <p class="muted" style="margin:0">點數有限，取捨就是樂趣。塔越高，敵人會長出越多詞條，樓層也會出現干擾；每一層開始前可以選門，越險的門魂晶越多。帶回的魂晶可以在工坊解鎖新的牌、技能、遺物與更多點數。最高紀錄：<b>第 ${meta.towerBest} 層</b>。</p>
+      <div class="bsec"><h3>能力值</h3><div class="stats-row">${stats}</div></div>
+      <div class="bsec"><h3>技能 <small>${bd.skills.length} / ${slots} 欄 · 不會結束回合，用完需要冷卻</small></h3><div class="chips">${skills}</div></div>
+      <div class="bsec"><h3>起始遺物 <small>每件 ${T.relicCost} 點${lockedRelics ? ` · 工坊還有 ${lockedRelics} 件可解鎖` : ''}</small></h3><div class="chips">${relics}</div></div>
+      <div class="bsec"><h3>起始牌組 <small>${bd.deck.length} 張（${T.deckMin}–${T.deckMax}）· 普通 1 點、稀有 2 點、傳說 3 點</small></h3><div class="deck-edit">${deck || '<p class="muted">牌組是空的。</p>'}</div><div class="chips">${palette}</div></div>
+      <div class="bsec"><h3>起點</h3><div class="chips">${starts}</div>${T.starts.length > 1 && !unl('start:6') ? '<p class="muted" style="margin:8px 0 0">抵達第 6 層後，可以在工坊解鎖「從第 6 層出發」。</p>' : ''}</div>
+      <div class="bsec"><h3>最近的攀登</h3>${hist}</div>
+      <div class="budget"><div class="meter ${cost > budget ? 'over' : ''}"><div class="mt">構築點數 <span>${cost} / ${budget}</span></div><div class="bar"><i style="width:${Math.min(100, (cost / budget) * 100)}%"></i></div></div>
+        <button type="button" class="btn primary big" data-action="go" ${errs.length ? 'disabled' : ''}>開始攀登</button>
+        ${errs.length ? `<div class="errs">${errs.join('、')}</div>` : ''}</div>
+    </div>`;
+    openOverlay(html, towerAction, false, keep);
+  }
+  function towerAction(a, d) {
+    const T = E.TOWER;
+    const slots = unl('slot2') ? 2 : 1;
+    switch (a) {
+      case 'back': saveBuild(); showTitle(); return;
+      case 'shop': saveBuild(); showShop(); return;
+      case 'go':
+        if (E.validateBuild(bd, meta.towerUnl).length) return;
+        saveBuild();
+        newGame({ mode: 'endless', build: JSON.parse(JSON.stringify(bd)), seed: (Math.random() * 2 ** 32) >>> 0 });
+        return;
+      case 'inc': case 'dec': {
+        const s = a === 'inc' ? 1 : -1;
+        if (d.k === 'hp') bd.hp = Math.max(T.baseHp, Math.min(T.maxHp, bd.hp + s));
+        if (d.k === 'undo') bd.undo = Math.max(0, Math.min(T.maxUndo, bd.undo + s));
+        if (d.k === 'hand' && unl('hand')) bd.hand = s > 0 ? 1 : 0;
+        break;
+      }
+      case 'skill':
+        if (!skillOpen(d.id)) { toast('到魂晶工坊解鎖這個技能'); return; }
+        if (bd.skills.includes(d.id)) bd.skills = bd.skills.filter((x) => x !== d.id);
+        else { bd.skills.push(d.id); if (bd.skills.length > slots) bd.skills.shift(); }
+        break;
+      case 'relic':
+        bd.relics = bd.relics.includes(d.id) ? bd.relics.filter((x) => x !== d.id) : bd.relics.concat(d.id);
+        break;
+      case 'add':
+        if (!cardOpen(d.k)) { toast('到魂晶工坊解鎖這張牌'); return; }
+        if (bd.deck.length >= T.deckMax) { toast(`牌組最多 ${T.deckMax} 張`); return; }
+        bd.deck.push([d.k, false]);
+        break;
+      case 'rm': bd.deck.splice(+d.i, 1); break;
+      case 'plus': if (bd.deck[+d.i]) bd.deck[+d.i][1] = !bd.deck[+d.i][1]; break;
+      case 'start': bd.start = +d.f; break;
+    }
+    Sfx.select(); saveBuild(); showTower(true);
+  }
+
+  function showShop(keep) {
+    const cats = [['core', '核心', '點數、精工、技能欄位與手牌'], ['card', '卡牌', '解鎖後可以放進起始牌組（爬塔途中的獎勵本來就會出現所有牌）'], ['skill', '技能', '主動技能，不會結束回合'], ['relic', '起始遺物', '出發時就帶著'], ['start', '起點', '跳過前面的樓層：出發前先挑幾次補給，更高的樓層魂晶也更多']];
+    const secs = cats.map(([cat, name, sub]) => {
+      const rows = E.TOWER.unlocks.filter((u) => u.cat === cat).map((u) => {
+        const st = unlockState(u);
+        const reqTxt = st === 'req' ? (u.best && meta.towerBest < u.best ? `（需要曾抵達第 ${u.best} 層）` : `（需要先解鎖「${E.TOWER.unlocks.find((x) => x.id === u.req).name}」）`) : '';
+        return `<div class="unl ${st === 'own' ? 'own' : ''}">${unlockIcon(u)}<div class="u-t"><b>${u.name}</b><small>${unlockDesc(u)}${reqTxt}</small></div>${st === 'own' ? '<span class="ok">已擁有</span>' : `<button type="button" class="btn ${st === 'ok' ? 'primary' : ''}" data-action="buy" data-id="${u.id}" ${st === 'ok' ? '' : 'disabled'}>${u.cost} 魂晶</button>`}</div>`;
+      }).join('');
+      return `<div class="bsec"><h3>${name} <small>${sub}</small></h3><div class="shop-grid">${rows}</div></div>`;
+    }).join('');
+    openOverlay(`<div class="shop">
+      <div class="toprow"><button type="button" class="btn ghost" data-action="back">← 命盤</button><h2>魂晶工坊</h2><span class="grow"></span><span class="shard-pill">魂晶 ${meta.shards}</span></div>
+      <p class="muted" style="margin:0">魂晶來自每一次攀登（故事模式也會給一些）。塔越高、門越險，帶回來的越多；倒下也不會失去已經賺到的魂晶。</p>
+      ${secs}</div>`, (a, d) => {
+      if (a === 'back') { showTower(); return; }
+      if (a === 'buy') {
+        const u = E.TOWER.unlocks.find((x) => x.id === d.id);
+        if (!u || unlockState(u) !== 'ok') return;
+        meta.shards -= u.cost; meta.towerUnl.push(u.id); saveMeta();
+        Sfx.heal(); toast(`解鎖「${u.name}」！`);
+        showShop(true);
+      }
+    }, false, keep);
   }
 
   function showHelp(back) {
@@ -868,10 +1156,10 @@
         <li><b>必須落子。</b>每回合至少要出一張牌，沒出完的牌在回合結束時會被棄掉。</li>
         <li><b>深淵上升。</b>超過標準回合數後，地面會開始出現裂痕，下回合崩塌成深淵。站在上面會受 2 傷害。</li>
         <li><b>增援。</b>虛線圈是下回合要出現的敵人；站上去能擋下它，但要受 1 傷害。</li>
-        <li><b>回溯。</b>同一回合內可以任意收回；退回上一回合每層限 1 次。</li>
+        <li><b>回溯。</b>同一回合內可以任意收回；退回上一回合每層有次數限制。</li>
       </ol>
-      <p class="muted">每層結束可以選一項獎勵：新牌、升級、遺物。第 5 與第 10 層有首領，通關後還能挑戰無盡深淵。</p>
-      <p class="keys"><kbd>1</kbd>–<kbd>4</kbd> 選牌　<kbd>空白</kbd> 結束回合　<kbd>Z</kbd> 回溯　<kbd>Esc</kbd> 取消</p>
+      <p class="muted"><b>無盡之塔：</b>自己配點打造角色（能力值、技能、遺物、牌組）。技能不會結束回合，用完要冷卻。越往上，敵人會帶著詞條（護盾、分裂、幽影……），樓層也有干擾。每層之前選門：越險的門魂晶越多。魂晶拿去工坊解鎖更多選擇。</p>
+      <p class="keys"><kbd>1</kbd>–<kbd>4</kbd> 選牌　<kbd>Q</kbd> <kbd>W</kbd> 技能　<kbd>空白</kbd> 結束回合　<kbd>Z</kbd> 回溯　<kbd>Esc</kbd> 取消</p>
       <div class="title-actions"><button type="button" class="btn primary" data-action="ok">${back ? '知道了' : '開始'}</button></div>`,
     (a) => { if (a === 'ok') { if (typeof back === 'function') back(); else closeOverlay(); } }, typeof back !== 'function');
   }
@@ -892,12 +1180,19 @@
     return '';
   }
   function showReward() {
+    const draft = S.phase === 'draft';
     const bonus = [];
-    if (S.lastPar) bonus.push('在標準回合內清場：多一個獎勵選項');
-    if (S.lastFlawless) bonus.push('無傷通過 +50 分');
+    if (!draft) {
+      if (S.lastShards) bonus.push(`魂晶 +${S.lastShards}`);
+      if (S.lastPar) bonus.push('在標準回合內清場：多一個獎勵選項');
+      if (S.lastFlawless) bonus.push('無傷通過 +50 分');
+    }
+    const total = E.draftPicks(S.startFloor || 1);
+    const eyebrow = draft ? `起始補給 · ${total - S.draftLeft + 1} / ${total}` : `${isTower() ? '無盡之塔 · ' : ''}第 ${S.floor} 層 · 清除`;
+    const title = draft ? `出發前往第 ${S.startFloor} 層前的補給` : S.boss ? '選擇一件首領遺物' : '選擇一項獎勵';
     openOverlay(`<div class="reward center">
-      <div class="eyebrow">第 ${S.floor} 層 · 清除</div>
-      <h2>${S.boss ? '選擇一件首領遺物' : '選擇一項獎勵'}</h2>
+      <div class="eyebrow">${eyebrow}</div>
+      <h2>${title}</h2>
       ${bonus.length ? `<div class="bonus">${bonus.join(' · ')}</div>` : ''}
       <div class="rewards">${S.rewards.map(rewardHTML).join('')}</div>
       <button type="button" class="btn ghost" data-action="skip">略過（+20 分）</button></div>`,
@@ -925,64 +1220,100 @@
       if (a === 'card') takeReward(i, +d.id);
     });
   }
-  function takeReward(i, param) {
-    const ev = E.applyReward(S, i, param);
-    if (!ev) { toast('無法選擇這個獎勵'); return; }
+  function enterFloorUI() {
     hist = [];
     closeOverlay(); rebuildPieces();
     delete infoEl.dataset.pinned;
     fullRender(); floorBanner(); Sfx.spawn();
-    addLog(`進入第 ${S.floor} 層`);
+    addLog(`進入第 ${S.floor} 層` + (S.mods && S.mods.length ? '：' + S.mods.map((m) => E.MODS[m].name).join('、') : ''));
     checkUnlocks(); saveRun();
+  }
+  function takeReward(i, param) {
+    const ev = E.applyReward(S, i, param);
+    if (!ev) { toast('無法選擇這個獎勵'); return; }
+    if (S.phase === 'draft') { saveRun(); renderHUD(); showReward(); return; }
+    if (S.phase === 'door') { saveRun(); renderHUD(); showDoors(); return; }
+    enterFloorUI();
+  }
+
+  function modChip(m) {
+    const d = E.MODS[m];
+    return `<span class="mod ${d.bad ? '' : 'good'}" title="${d.name}：${d.desc}">${d.n}<b>${d.name}</b></span>`;
+  }
+  function showDoors() {
+    const next = S.floor + 1;
+    const names = ['平穩之門', '險峻之門', '深淵之門'];
+    const doors = S.doors.map((d, i) => {
+      const perks = [];
+      if (d.extra) perks.push(`獎勵 +${d.extra} 選項`);
+      if (d.relic) perks.push('保證出現遺物');
+      const mods = d.mods.length ? d.mods.map((m) => `<div class="d-mod">${modChip(m)}<span>${E.MODS[m].desc}</span></div>`).join('') : '<div class="d-none">沒有特殊狀況</div>';
+      return `<button type="button" class="door ${d.boss ? 'boss' : 't' + d.tier}" data-action="door" data-i="${i}"><span class="d-name">${d.boss ? '首領之門' : names[d.tier]}</span><span class="d-bounty">魂晶 ×${d.bounty}</span>${perks.length ? `<span class="d-perks">${perks.join(' · ')}</span>` : ''}<div class="d-mods">${mods}</div></button>`;
+    }).join('');
+    openOverlay(`<div class="center"><div class="eyebrow">無盡之塔 · 第 ${next} 層</div>
+      <h2>${S.doors[0].boss ? '首領就在門後' : '選擇下一道門'}</h2>
+      <p class="muted">越危險的門，帶回的魂晶越多、獎勵越好。生命 ${S.hp} / ${S.maxHp}，這一局已賺到 ${S.shards} 魂晶。</p>
+      <div class="doors">${doors}</div></div>`, (a, d) => {
+      if (a !== 'door') return;
+      const ev = E.chooseDoor(S, +d.i);
+      if (ev) enterFloorUI();
+    });
   }
 
   function showVictory() {
     Sfx.win();
-    openOverlay(`<div class="center"><div class="eyebrow">Victory</div>
+    finalizeRun();
+    openOverlay(`<div class="center"><div class="eyebrow">Victory · ${heroName()}</div>
       <h2>你征服了棋淵</h2>
-      <p class="muted">虛空女王倒下了。深淵之下還有更深的黑暗：要繼續挑戰無盡深淵嗎？分數會繼續累積。</p>
+      <p class="muted">虛空女王倒下了。想知道自己的構築能走多遠？去無盡之塔試試吧。這一局帶回 ${S.shards} 魂晶。</p>
       ${statsHTML()}
-      <div class="title-actions"><button type="button" class="btn primary big" data-action="endless">繼續深入（無盡模式）</button><button type="button" class="btn big" data-action="finish">結算並結束</button></div></div>`,
+      <div class="title-actions"><button type="button" class="btn primary big" data-action="tower">前往無盡之塔</button><button type="button" class="btn big" data-action="again">再來一局</button><button type="button" class="btn ghost big" data-action="title">回到標題</button></div></div>`,
     (a) => {
-      if (a === 'endless') { S.justWon = false; saveRun(); showReward(); }
-      if (a === 'finish') { finalizeRun(); showSummary('凱旋而歸'); }
+      if (a === 'tower') showTower();
+      if (a === 'again') newGame({ hero: S.hero, seed: (Math.random() * 2 ** 32) >>> 0 });
+      if (a === 'title') showTitle();
     });
+  }
+  function againOpts() {
+    if (isTower()) return { mode: 'endless', build: JSON.parse(JSON.stringify(S.build)), seed: (Math.random() * 2 ** 32) >>> 0 };
+    return S.daily ? { hero: 'ranger', seed: E.hashStr('qiyuan-' + todayStr()), daily: true } : { hero: S.hero, seed: (Math.random() * 2 ** 32) >>> 0 };
+  }
+  function endButtons(canUndo) {
+    return `<div class="title-actions">
+      ${canUndo ? `<button type="button" class="btn" data-action="undo">回溯上一回合（剩 ${S.undoLeft} 次）</button>` : ''}
+      ${isTower() ? '<button type="button" class="btn primary" data-action="tower">返回命盤</button><button type="button" class="btn" data-action="again">同樣構築再爬一次</button>' : `<button type="button" class="btn primary" data-action="again">${S.daily ? '再挑戰一次今日' : '再來一局'}</button>`}
+      <button type="button" class="btn ghost" data-action="title">回到標題</button></div>`;
+  }
+  function endHandler(a) {
+    if (a === 'undo') { undo(); return; }
+    finalizeRun();
+    if (a === 'tower') showTower();
+    if (a === 'again') newGame(againOpts());
+    if (a === 'title') showTitle();
   }
   function showSummary(title) {
-    openOverlay(`<div class="center"><div class="eyebrow">${S.daily ? '每日挑戰 · ' + todayStr() : E.HEROES[S.hero].name}</div><h2>${title}</h2>${statsHTML()}
-      <div class="title-actions"><button type="button" class="btn primary" data-action="again">再來一局</button><button type="button" class="btn ghost" data-action="title">回到標題</button></div></div>`,
-    (a) => {
-      if (a === 'again') newGame(S.daily ? { hero: 'ranger', seed: E.hashStr('qiyuan-' + todayStr()), daily: true } : { hero: S.hero, seed: (Math.random() * 2 ** 32) >>> 0 });
-      if (a === 'title') showTitle();
-    });
+    openOverlay(`<div class="center"><div class="eyebrow">${S.daily ? '每日挑戰 · ' + todayStr() : heroName()}</div><h2>${title}</h2>${statsHTML()}
+      ${isTower() ? nextUnlockHTML(meta.shards) : ''}${endButtons(false)}</div>`, endHandler);
   }
   function showGameOver() {
-    const nb = S.score > meta.best;
-    recordBest();
+    const nb = isTower() ? S.floor > runStartBest : S.score > runStartScore;
     const canUndo = S.undoLeft > 0 && hist.length > 0;
-    openOverlay(`<div class="center"><div class="eyebrow">${S.daily ? '每日挑戰 · ' + todayStr() : E.HEROES[S.hero].name}</div>
+    openOverlay(`<div class="center"><div class="eyebrow">${S.daily ? '每日挑戰 · ' + todayStr() : heroName()}</div>
       <h2>倒在第 ${S.floor} 層</h2>
-      ${nb ? '<div class="newrec">新紀錄！</div>' : ''}
+      ${nb ? `<div class="newrec">${isTower() ? '新的最高樓層！' : '新紀錄！'}</div>` : ''}
       ${statsHTML()}
-      <div class="title-actions">
-        ${canUndo ? `<button type="button" class="btn" data-action="undo">回溯上一回合（剩 ${S.undoLeft} 次）</button>` : ''}
-        <button type="button" class="btn primary" data-action="again">${S.daily ? '再挑戰一次今日' : '再來一局'}</button>
-        <button type="button" class="btn ghost" data-action="title">回到標題</button>
-      </div></div>`,
-    (a) => {
-      if (a === 'undo') { undo(); return; }
-      finalizeRun();
-      if (a === 'again') newGame(S.daily ? { hero: 'ranger', seed: E.hashStr('qiyuan-' + todayStr()), daily: true } : { hero: S.hero, seed: (Math.random() * 2 ** 32) >>> 0 });
-      if (a === 'title') showTitle();
-    });
+      ${S.shards ? `<p class="muted">帶回 <b style="color:#cdbbff">${S.shards} 魂晶</b>，工坊共有 ${meta.shards} 魂晶。</p>` : ''}
+      ${nextUnlockHTML(meta.shards)}
+      ${endButtons(canUndo)}</div>`, endHandler);
   }
-  function showDeck(closeOnly) {
+  function showDeck() {
     if (!S || demo) return;
     const cards = S.deck.slice().sort((a, b) => S.cards[a].k.localeCompare(S.cards[b].k)).map((id) => cardEl(S.cards[id]).outerHTML).join('');
     const relics = S.relics.length ? S.relics.map((r) => `<div class="relic-row"><span class="ri">${E.RELICS[r].icon}</span><div><b>${E.RELICS[r].name}</b><small>${E.RELICS[r].desc}</small></div></div>`).join('') : '<p class="muted">還沒有遺物。</p>';
-    openOverlay(`<div class="eyebrow">${E.HEROES[S.hero].name} · 牌組 ${S.deck.length} 張</div><h2>牌組與遺物</h2>
+    const skills = (S.skills || []).map((k) => `<div class="relic-row"><span class="ri" style="background:#3a2d6e">${E.SKILLS[k.id].n}</span><div><b>${E.SKILLS[k.id].name}</b><small>冷卻 ${E.SKILLS[k.id].cd} · ${E.SKILLS[k.id].desc}</small></div></div>`).join('');
+    openOverlay(`<div class="eyebrow">${heroName()} · 牌組 ${S.deck.length} 張</div><h2>牌組與遺物</h2>
       <div class="deck-grid">${cards}</div>
-      <div class="relic-list">${relics}</div>
+      <div class="relic-list">${skills}${relics}</div>
       <div class="title-actions" style="margin-top:16px"><button type="button" class="btn primary" data-action="ok">返回</button></div>`,
     (a) => { if (a === 'ok') closeOverlay(); }, true);
   }
@@ -998,24 +1329,38 @@
   }
 
   /* ---------- 開始 / 繼續 ---------- */
+  function migrate(X) {
+    if (!X.mode) X.mode = 'story';
+    X.skills = X.skills || []; X.mods = X.mods || []; X.fire = X.fire || [];
+    X.shards = X.shards || 0; X.lastShards = X.lastShards || 0; X.undoBase = X.undoBase || 1;
+    for (const e of X.enemies || []) e.affixes = e.affixes || [];
+    return X;
+  }
   function enterRun() {
-    demo = false; hist = []; sel = -1; hover = null; focusUid = null; runRecorded = false;
+    demo = false; hist = []; sel = -1; selSkill = -1; hover = null; focusUid = null; runRecorded = false; preFinalMeta = null;
+    runStartBest = meta.towerBest; runStartScore = meta.best;
     logEl.innerHTML = '';
     closeOverlay(); rebuildPieces(); fullRender();
   }
   function newGame(o) {
+    abandonSave();
     S = E.newRun(o);
     enterRun();
-    floorBanner();
-    addLog(o.daily ? `每日挑戰 ${todayStr()} 開始` : `${E.HEROES[S.hero].name}踏入了棋淵`);
     saveRun();
+    if (isTower()) {
+      addLog(`開始攀登無盡之塔${S.startFloor > 1 ? `（從第 ${S.startFloor} 層出發）` : ''}`);
+      if (S.phase === 'draft') { showReward(); return; }
+    } else addLog(o.daily ? `每日挑戰 ${todayStr()} 開始` : `${E.HEROES[S.hero].name}踏入了棋淵`);
+    floorBanner();
     if (!meta.seenHelp) { meta.seenHelp = true; saveMeta(); showHelp(true); }
   }
   function resumeGame(saved) {
-    S = saved;
+    S = migrate(saved);
     enterRun();
     addLog('繼續上次的進度');
     if (S.phase === 'reward') { if (S.justWon) showVictory(); else showReward(); }
+    else if (S.phase === 'draft') showReward();
+    else if (S.phase === 'door') showDoors();
     else floorBanner();
   }
 
@@ -1039,7 +1384,9 @@
     if (e.key >= '1' && e.key <= '4') selectCard(+e.key - 1);
     else if (e.key === ' ') { e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); doWait(); }
     else if (e.key === 'z' || e.key === 'Z') undo();
-    else if (e.key === 'Escape') { sel = -1; pendingTap = null; focusUid = null; refresh(); renderHand(); infoDefault(); }
+    else if (e.key === 'q' || e.key === 'Q') selectSkill(0);
+    else if (e.key === 'w' || e.key === 'W') selectSkill(1);
+    else if (e.key === 'Escape') { sel = -1; selSkill = -1; pendingTap = null; focusUid = null; refresh(); renderHand(); infoDefault(); }
   });
 
   // 開場：標題畫面後面放一盤示範棋局

@@ -20,7 +20,9 @@
       <div class="stat"><span class="lbl">深度</span><b id="floor">1</b></div>
       <div class="stat" id="turnStat"><span class="lbl">回合</span><b id="turn">1</b><span class="sub" id="par"></span></div>
       <div class="stat"><span class="lbl">分數</span><b id="score">0</b></div>
+      <div class="stat" id="shardStat" title="這一局賺到的魂晶，結束時存入工坊"><span class="lbl">魂晶</span><b id="shards">0</b></div>
     </div>
+    <div class="mods" id="mods"></div>
     <div class="relics" id="relics"></div>
     <nav class="hud-btns">
       <button id="btnDeck" class="chip" type="button">牌組</button>
@@ -50,6 +52,7 @@
     <div class="pile" id="pile"></div>
     <div class="hand" id="hand"></div>
     <div class="tray-actions">
+      <div class="skills" id="skills"></div>
       <button id="btnUndo" class="btn ghost" type="button" title="同一回合內收回免費；退回上一回合會消耗次數">回溯 <kbd>Z</kbd> <span id="undoLeft"></span></button>
       <button id="btnEnd" class="btn primary" type="button">結束回合 <kbd>空白</kbd></button>
     </div>

@@ -88,9 +88,137 @@
     master: { name: '棋聖', hp: 4, deck: ['queen', 'knight', 'knight', 'rook', 'bishop', 'king'], relics: ['lantern'], desc: '持有皇后與先知之燈，能預讀牌序。', unlock: '通關第 10 層' },
   };
 
+  // 主動技能：不會結束回合，用完要冷卻（敵方回合數）
+  const SKILLS = {
+    redraw: { n: '洗', name: '重整', cd: 3, cost: 1, desc: '棄掉手牌，重新抽滿。' },
+    mend:   { n: '癒', name: '療傷', cd: 7, cost: 2, desc: '回復 1 生命。' },
+    shove:  { n: '崩', name: '崩拳', cd: 3, cost: 2, card: { k: 'shove', plus: true }, desc: '把相鄰敵人一路推到撞上東西為止。' },
+    blink:  { n: '影', name: '影步', cd: 4, cost: 3, card: { k: 'blink', plus: true }, desc: '瞬移到 3 格內的空地。' },
+    swap:   { n: '換', name: '換形', cd: 4, cost: 3, card: { k: 'swap', plus: false }, desc: '與 3 格內的敵人交換位置。' },
+    lance:  { n: '穿', name: '穿雲', cd: 3, cost: 3, card: { k: 'lance', plus: true }, desc: '刺擊直線 3 格內所有敵人，各 2 傷害。' },
+    whirl:  { n: '旋', name: '旋風', cd: 4, cost: 3, card: { k: 'whirl', plus: true }, desc: '對周圍 8 格敵人各造成 1 傷害，並推開存活者。' },
+    seal:   { n: '封', name: '封印', cd: 4, cost: 3, target: 'enemy', desc: '取消一個敵人已經鎖定的攻擊。' },
+  };
+
+  // 無盡之塔的敵人詞條
+  const AFFIXES = {
+    shield:   { n: '盾', name: '護盾', desc: '抵擋第一次受到的傷害（不算擊殺，連鎖會中斷）。' },
+    tough:    { n: '厚', name: '厚皮', desc: '生命 +2。' },
+    fierce:   { n: '狂', name: '狂暴', desc: '攻擊傷害 +1。' },
+    swift:    { n: '疾', name: '疾行', desc: '每回合行動兩次（移動兩步）。' },
+    volatile: { n: '爆', name: '爆裂', desc: '死亡時對周圍 8 格造成 1 傷害，敵我不分。' },
+    thorny:   { n: '棘', name: '荊棘', desc: '直接撞上它（移動攻擊）時你會受到 1 傷害。' },
+    regen:    { n: '生', name: '再生', desc: '每回合結束回復 1 生命。' },
+    split:    { n: '裂', name: '分裂', desc: '死亡時在身旁分裂出兩隻小鬼。' },
+    anchored: { n: '錨', name: '不動', desc: '無法被推動或交換位置。' },
+    phantom:  { n: '幽', name: '幽影', desc: '不會被其他敵人或爆炸波及（借刀殺人無效）。' },
+  };
+
+  // 樓層詞綴（場地干擾 / 祝福），在選門時就看得到
+  const MODS = {
+    fire:    { n: '焰', name: '灼地', bad: true, from: 2, desc: '部分地面燃燒：回合結束時站在上面的人（包括敵人）受 1 傷害。' },
+    horde:   { n: '眾', name: '大軍', bad: true, from: 2, desc: '敵人數量 ×1.5，同時在場的上限 +1。' },
+    elite:   { n: '精', name: '精銳', bad: true, from: 3, desc: '每個敵人額外多一個詞條。' },
+    crumble: { n: '崩', name: '崩落', bad: true, from: 3, desc: '地面從第 2 回合就開始崩塌。' },
+    swift:   { n: '疾', name: '疾風', bad: true, from: 4, desc: '所有敵人獲得「疾行」。' },
+    dark:    { n: '暗', name: '暗影', bad: true, from: 5, desc: '只看得到你周圍 2 格內的敵人攻擊標示。' },
+    cursed:  { n: '咒', name: '詛咒', bad: true, from: 6, desc: '這層的手牌上限 −1。' },
+    spring:  { n: '泉', name: '靈泉', bad: false, from: 1, desc: '進入時回復 2 生命。' },
+    surge:   { n: '湧', name: '魔力潮', bad: false, from: 1, desc: '第一回合打出的所有牌都視為迅捷。' },
+  };
+
+  // 無盡之塔：自訂角色的點數規則與魂晶工坊的解鎖項目
+  const TOWER = {
+    baseBudget: 10, budgetStep: 3,
+    baseHp: 4, maxHp: 10, deckMin: 5, deckMax: 12,
+    cardCost: [1, 2, 3], plusCost: 1, relicCost: 3, hpCost: 1, undoCost: 1, maxUndo: 3, handCost: 6,
+    baseCards: ['king', 'knight', 'rook', 'bishop'],
+    baseSkills: ['redraw'],
+    baseRelics: ['aegis', 'fang', 'heart'],
+    starts: [1, 6, 11, 16, 21, 31],
+    unlocks: [
+      { id: 'budget1', cat: 'core', name: '命盤擴充 I', cost: 30, desc: '構築點數 +3。' },
+      { id: 'budget2', cat: 'core', name: '命盤擴充 II', cost: 80, req: 'budget1', desc: '構築點數 +3。' },
+      { id: 'budget3', cat: 'core', name: '命盤擴充 III', cost: 150, req: 'budget2', desc: '構築點數 +3。' },
+      { id: 'budget4', cat: 'core', name: '命盤擴充 IV', cost: 250, req: 'budget3', desc: '構築點數 +3。' },
+      { id: 'budget5', cat: 'core', name: '命盤擴充 V', cost: 380, req: 'budget4', desc: '構築點數 +3。' },
+      { id: 'budget6', cat: 'core', name: '命盤擴充 VI', cost: 550, req: 'budget5', desc: '構築點數 +3。' },
+      { id: 'plus', cat: 'core', name: '精工', cost: 60, desc: '起始牌組可以放入升級過的牌（每張 +1 點）。' },
+      { id: 'slot2', cat: 'core', name: '雙技', cost: 160, desc: '解鎖第二個技能欄位。' },
+      { id: 'hand', cat: 'core', name: '多謀', cost: 200, desc: '能力值：可以花 6 點讓手牌上限 +1。' },
+      { id: 'card:lance', cat: 'card', name: '長槍', cost: 20 },
+      { id: 'card:shove', cat: 'card', name: '掌推', cost: 20 },
+      { id: 'card:leap', cat: 'card', name: '飛躍', cost: 35 },
+      { id: 'card:whirl', cat: 'card', name: '迴旋', cost: 35 },
+      { id: 'card:swap', cat: 'card', name: '移形', cost: 45 },
+      { id: 'card:blink', cat: 'card', name: '影遁', cost: 45 },
+      { id: 'card:queen', cat: 'card', name: '后行', cost: 110 },
+      { id: 'skill:mend', cat: 'skill', name: '療傷', cost: 35 },
+      { id: 'skill:shove', cat: 'skill', name: '崩拳', cost: 35 },
+      { id: 'skill:blink', cat: 'skill', name: '影步', cost: 55 },
+      { id: 'skill:swap', cat: 'skill', name: '換形', cost: 55 },
+      { id: 'skill:lance', cat: 'skill', name: '穿雲', cost: 60 },
+      { id: 'skill:whirl', cat: 'skill', name: '旋風', cost: 60 },
+      { id: 'skill:seal', cat: 'skill', name: '封印', cost: 80 },
+      { id: 'relic:thorns', cat: 'relic', name: '荊棘甲', cost: 30 },
+      { id: 'relic:gate', cat: 'relic', name: '守門人', cost: 30 },
+      { id: 'relic:quake', cat: 'relic', name: '震地靴', cost: 40 },
+      { id: 'relic:lantern', cat: 'relic', name: '先知之燈', cost: 40 },
+      { id: 'relic:momentum', cat: 'relic', name: '衝勁', cost: 45 },
+      { id: 'relic:berserk', cat: 'relic', name: '狂戰之血', cost: 45 },
+      { id: 'relic:hourglass', cat: 'relic', name: '時之沙漏', cost: 50 },
+      { id: 'relic:conduit', cat: 'relic', name: '靈魂導管', cost: 60 },
+      { id: 'relic:gambler', cat: 'relic', name: '賭徒骰', cost: 60 },
+      { id: 'relic:bell', cat: 'relic', name: '回響之鈴', cost: 70 },
+      { id: 'relic:spark', cat: 'relic', name: '連鎖閃電', cost: 70 },
+      { id: 'relic:satchel', cat: 'relic', name: '戰術腰包', cost: 90 },
+      { id: 'start:6', cat: 'start', name: '從第 6 層出發', cost: 80, best: 6, desc: '跳過前 5 層，出發前先挑 3 次補給。' },
+      { id: 'start:11', cat: 'start', name: '從第 11 層出發', cost: 200, best: 11, req: 'start:6', desc: '跳過前 10 層，出發前先挑 6 次補給。' },
+      { id: 'start:16', cat: 'start', name: '從第 16 層出發', cost: 380, best: 16, req: 'start:11', desc: '跳過前 15 層，出發前先挑 9 次補給。' },
+      { id: 'start:21', cat: 'start', name: '從第 21 層出發', cost: 600, best: 21, req: 'start:16', desc: '跳過前 20 層，出發前先挑 12 次補給。' },
+      { id: 'start:31', cat: 'start', name: '從第 31 層出發', cost: 1000, best: 31, req: 'start:21', desc: '跳過前 30 層，出發前先挑 18 次補給。' },
+    ],
+  };
+  const draftPicks = (start) => Math.floor((start - 1) / 5) * 3;
+  function budgetOf(unlocked) {
+    let b = TOWER.baseBudget;
+    for (let i = 1; i <= 6; i++) if (unlocked.includes('budget' + i)) b += TOWER.budgetStep;
+    return b;
+  }
+  function buildCost(b) {
+    let c = Math.max(0, b.hp - TOWER.baseHp) * TOWER.hpCost + (b.undo || 0) * TOWER.undoCost + (b.hand ? TOWER.handCost : 0);
+    for (const [k, plus] of b.deck) c += TOWER.cardCost[CARDS[k].r] + (plus ? TOWER.plusCost : 0);
+    c += b.relics.length * TOWER.relicCost;
+    for (const id of b.skills) c += SKILLS[id].cost;
+    return c;
+  }
+  // 回傳錯誤訊息陣列（空陣列表示可以出發）
+  function validateBuild(b, unlocked) {
+    const err = [];
+    const un = (id) => unlocked.includes(id);
+    if (buildCost(b) > budgetOf(unlocked)) err.push('構築點數超出上限');
+    if (b.deck.length < TOWER.deckMin) err.push(`牌組至少要 ${TOWER.deckMin} 張`);
+    if (b.deck.length > TOWER.deckMax) err.push(`牌組最多 ${TOWER.deckMax} 張`);
+    if (b.hp < TOWER.baseHp || b.hp > TOWER.maxHp) err.push('生命超出範圍');
+    if ((b.undo || 0) > TOWER.maxUndo) err.push('回溯次數超出範圍');
+    if (b.hand && !un('hand')) err.push('尚未解鎖「多謀」');
+    if (b.skills.length > (un('slot2') ? 2 : 1)) err.push('技能欄位不足');
+    for (const [k, plus] of b.deck) {
+      if (!TOWER.baseCards.includes(k) && !un('card:' + k)) err.push('尚未解鎖：' + CARDS[k].name);
+      if (plus && !un('plus')) err.push('尚未解鎖「精工」');
+    }
+    for (const r of b.relics) if (!TOWER.baseRelics.includes(r) && !un('relic:' + r)) err.push('尚未解鎖：' + RELICS[r].name);
+    for (const id of b.skills) if (!TOWER.baseSkills.includes(id) && !un('skill:' + id)) err.push('尚未解鎖：' + SKILLS[id].name);
+    if (b.start > 1 && !un('start:' + b.start)) err.push('尚未解鎖這個起點');
+    return [...new Set(err)];
+  }
+
   /* ---------- 基本查詢 ---------- */
   const has = (S, r) => S.relics.includes(r);
-  const handSize = (S) => 3 + (has(S, 'satchel') ? 1 : 0);
+  const hasMod = (S, m) => !!(S.mods && S.mods.includes(m));
+  const hasAff = (e, a) => !!(e.affixes && e.affixes.includes(a));
+  const endless = (S) => S.mode === 'endless';
+  const handSize = (S) => Math.max(2, 3 + (has(S, 'satchel') ? 1 : 0) + (S.handBonus || 0) - (hasMod(S, 'cursed') ? 1 : 0));
   const tileAt = (S, x, y) => (inb(x, y) ? S.tiles[idx(x, y)] : '#');
   const isFloor = (S, x, y) => tileAt(S, x, y) === '.';
   function enemyAt(S, x, y) {
@@ -144,12 +272,16 @@
 
   /* ---------- 新的一局 ---------- */
   function newRun(o) {
+    const isTower = o.mode === 'endless' && o.build;
     const heroId = HEROES[o.hero] ? o.hero : 'ranger';
     const hero = HEROES[heroId];
     const seed = (o.seed >>> 0) || 1;
+    const hp0 = isTower ? o.build.hp : hero.hp;
     const S = {
-      v: 1, seed, rng: seed, daily: !!o.daily, hero: heroId,
-      floor: 0, hp: hero.hp, maxHp: hero.hp,
+      v: 2, mode: isTower ? 'endless' : 'story', seed, rng: seed, daily: !!o.daily, hero: isTower ? null : heroId,
+      floor: 0, hp: hp0, maxHp: hp0,
+      skills: [], handBonus: 0, undoBase: 1, mods: [], fire: [], door: null, doors: null,
+      shards: 0, lastShards: 0, draftLeft: 0, startFloor: 1,
       cards: {}, deck: [], nextCard: 1, draw: [], hand: [], discard: [],
       relics: [], tiles: [], player: { x: 3, y: 6 }, enemies: [], spawns: [], reserve: [], cracks: [], nextUid: 1,
       turn: 1, par: 0, turnKills: 0, chain: 0, echoUsed: false, aegisUsed: false, undoLeft: 1, fangCount: 0,
@@ -157,9 +289,28 @@
       score: 0, floorDmg: 0, lastPar: false, lastFlawless: false,
       stats: { kills: 0, friendly: 0, pit: 0, bestChain: 0, dmgTaken: 0, turns: 0, floors: 0, blocked: 0 },
     };
-    hero.deck.forEach((k) => addCard(S, k, false));
-    hero.relics.forEach((r) => addRelic(S, r));
-    startFloor(S, 1, []);
+    if (isTower) {
+      const b = o.build;
+      b.deck.forEach(([k, plus]) => addCard(S, k, plus));
+      b.relics.forEach((r) => addRelic(S, r));
+      S.skills = b.skills.map((id) => ({ id, left: 0 }));
+      S.handBonus = b.hand ? 1 : 0;
+      S.undoBase = 1 + (b.undo || 0);
+      S.build = JSON.parse(JSON.stringify(b));
+      S.startFloor = b.start || 1;
+      if (S.startFloor > 1) {
+        // 跳關：先挑幾次補給，再選門進塔
+        S.floor = S.startFloor - 1;
+        S.draftLeft = draftPicks(S.startFloor);
+        S.phase = 'draft';
+        S.rewards = genDraft(S);
+        return S;
+      }
+    } else {
+      hero.deck.forEach((k) => addCard(S, k, false));
+      hero.relics.forEach((r) => addRelic(S, r));
+    }
+    startFloor(S, 1, [], null);
     return S;
   }
 
@@ -209,13 +360,51 @@
     if (f >= 6) p.push(['warlock', 1.5]);
     return p;
   }
-  const maxActive = (S) => Math.min(7, 3 + Math.floor((S.floor + 1) / 3));
+  const maxActive = (S) => Math.min(8, 3 + Math.floor((Math.min(S.floor, 14) + 1) / 3) + (hasMod(S, 'horde') ? 1 : 0));
 
-  function startFloor(S, f, ev) {
+  // 無盡之塔的成長曲線：血量成長很慢（保住連鎖的爽感），主要靠詞條與傷害變強
+  function towerScale(S, d) {
+    const f = S.floor;
+    if (!endless(S)) return { hp: f > 10 ? (d.boss ? f - 10 : Math.floor((f - 8) / 4)) : 0, dmg: 0 };
+    const dmg = Math.floor(Math.max(0, f - 15) / 8);
+    if (d.boss) return { hp: Math.floor((f - 5) * 0.8) + Math.max(0, f - 25), dmg };
+    return { hp: Math.floor(Math.max(0, f - 10) / 8) + Math.floor(Math.max(0, f - 25) / 5), dmg };
+  }
+  function affixAllowed(type, a) {
+    const d = ENEMIES[type];
+    if (d.boss) return ['shield', 'tough', 'fierce', 'regen', 'phantom', 'thorny', 'volatile'].includes(a);
+    if (a === 'swift') return ['imp', 'spiker', 'puffer', 'archer', 'brute'].includes(type);
+    if (a === 'volatile') return type !== 'puffer';
+    if (a === 'thorny') return type !== 'spiker';
+    if (a === 'anchored') return !d.heavy;
+    if (a === 'split') return type !== 'imp';
+    return true;
+  }
+  function rollAffixes(S, type) {
+    const f = S.floor; const d = ENEMIES[type];
+    let n = 0;
+    if (d.boss) n = f >= 30 ? 2 : f >= 15 ? 1 : 0;
+    else {
+      if (rnd(S) < Math.min(0.85, Math.max(0, (f - 2) * 0.07))) n++;
+      if (n && rnd(S) < Math.min(0.7, Math.max(0, (f - 11) * 0.05))) n++;
+      if (n > 1 && rnd(S) < Math.min(0.5, Math.max(0, (f - 24) * 0.04))) n++;
+    }
+    if (hasMod(S, 'elite')) n++;
+    const pool = shuffle(S, Object.keys(AFFIXES).filter((a) => affixAllowed(type, a) && a !== 'swift'));
+    const out = pool.slice(0, n);
+    if (out.length && affixAllowed(type, 'swift') && rnd(S) < 0.15) out[out.length - 1] = 'swift';
+    if (hasMod(S, 'swift') && affixAllowed(type, 'swift') && !out.includes('swift')) out.push('swift');
+    return out;
+  }
+
+  function startFloor(S, f, ev, door) {
     S.floor = f;
     S.boss = f % 5 === 0;
+    S.door = door || null;
+    S.mods = door ? door.mods.slice() : [];
+    S.doors = null;
     genTiles(S);
-    S.enemies = []; S.spawns = []; S.reserve = []; S.cracks = [];
+    S.enemies = []; S.spawns = []; S.reserve = []; S.cracks = []; S.fire = [];
     S.player = { x: -9, y: -9 };
     const p = randomEmpty(S, (x, y) => y >= H - 2) || randomEmpty(S);
     S.player = { x: p.x, y: p.y };
@@ -223,13 +412,16 @@
 
     if (S.boss) {
       const bossType = (f / 5) % 2 === 1 ? 'kboss' : 'qboss';
+      S.bossName = ENEMIES[bossType].name;
       const b = randomEmpty(S, (x, y) => y <= 1 && cheb({ x, y }, S.player) >= 4) || randomEmpty(S, far) || randomEmpty(S);
-      spawnEnemy(S, bossType, b.x, b.y, ev, true);
+      spawnEnemy(S, bossType, b.x, b.y, ev, true, endless(S));
       const minions = f >= 10 ? ['imp', 'imp', 'archer'] : ['imp', 'imp'];
-      for (const m of minions) { const t = randomEmpty(S, far) || randomEmpty(S); if (t) spawnEnemy(S, m, t.x, t.y, ev, true); }
+      for (const m of minions) { const t = randomEmpty(S, far) || randomEmpty(S); if (t) spawnEnemy(S, m, t.x, t.y, ev, true, endless(S)); }
       S.par = 14;
     } else {
-      let budget = 3 + Math.round(f * 1.25 + Math.max(0, f - 5) * 0.4);
+      const fe = endless(S) ? Math.min(f, 14) : f;
+      let budget = 3 + Math.round(fe * 1.25 + Math.max(0, fe - 5) * 0.4);
+      if (hasMod(S, 'horde')) budget = Math.round(budget * 1.5);
       const pool = enemyPool(f); const list = [];
       while (budget > 0) {
         const opts = pool.filter(([k]) => ENEMIES[k].cost <= budget);
@@ -247,8 +439,18 @@
       S.par = list.length + 2;
     }
 
+    if (hasMod(S, 'fire')) {
+      const n = 5 + Math.min(4, Math.floor(f / 10));
+      for (let i = 0; i < n; i++) {
+        const t = randomEmpty(S, (x, y) => !S.fire.includes(idx(x, y)) && cheb({ x, y }, S.player) >= 1);
+        if (t) S.fire.push(idx(t.x, t.y));
+      }
+    }
+    S.collapseAt = hasMod(S, 'crumble') ? 2 : 0;
+    if (hasMod(S, 'spring')) healPlayer(S, 2, ev);
+    for (const sk of S.skills || []) sk.left = 0;
     S.turn = 1; S.played = 0; S.turnKills = 0; S.chain = 0; S.echoUsed = false; S.aegisUsed = false; S.floorDmg = 0;
-    S.undoLeft = 1 + (has(S, 'hourglass') ? 2 : 0);
+    S.undoLeft = (S.undoBase || 1) + (has(S, 'hourglass') ? 2 : 0);
     S.draw = shuffle(S, S.deck.slice()); S.hand = []; S.discard = [];
     drawTo(S, handSize(S), ev);
     for (const e of S.enemies.slice().sort((a, b) => a.uid - b.uid)) { e.fresh = false; enemyTurn(S, e, ev, false); }
@@ -257,14 +459,17 @@
     S.rewards = null;
   }
 
-  function spawnEnemy(S, type, x, y, ev, fresh, canElite) {
+  function spawnEnemy(S, type, x, y, ev, fresh, gen) {
     const d = ENEMIES[type];
-    const extra = S.floor > 10 ? (d.boss ? (S.floor - 10) : Math.floor((S.floor - 8) / 4)) : 0;
-    const elite = !!canElite && !d.boss && S.floor >= 2 && rnd(S) < Math.min(0.6, 0.2 + 0.07 * (S.floor - 2));
-    const hp = d.hp + extra + (elite ? 1 : 0);
-    const e = { uid: S.nextUid++, type, x, y, hp, maxHp: hp, elite, intent: null, cd: type === 'warlock' ? 2 : 0, tick: 0, stun: false, fresh: !!fresh };
+    const sc = towerScale(S, d);
+    // 故事模式用「精英」，無盡之塔改用詞條
+    const elite = !!gen && !endless(S) && !d.boss && S.floor >= 2 && rnd(S) < Math.min(0.6, 0.2 + 0.07 * (S.floor - 2));
+    const affixes = gen && endless(S) ? rollAffixes(S, type) : [];
+    const hp = d.hp + sc.hp + (elite ? 1 : 0) + (affixes.includes('tough') ? 2 : 0);
+    const e = { uid: S.nextUid++, type, x, y, hp, maxHp: hp, elite, affixes, shield: affixes.includes('shield') ? 1 : 0, dmgUp: sc.dmg,
+      intent: null, cd: type === 'warlock' ? 2 : 0, tick: 0, stun: false, fresh: !!fresh };
     S.enemies.push(e);
-    ev.push({ t: 'spawn', uid: e.uid, type, x, y, hp, elite });
+    ev.push({ t: 'spawn', uid: e.uid, type, x, y, hp, elite, affixes, shield: e.shield });
     return e;
   }
 
@@ -282,9 +487,13 @@
 
   /* ---------- 玩家可下的位置 ---------- */
   function legalTargets(S, hi) {
-    const c = S.cards[S.hand[hi]];
+    if (S.phase !== 'player') return [];
+    return cardTargets(S, S.cards[S.hand[hi]]);
+  }
+  const immovable = (e) => !!ENEMIES[e.type].heavy || hasAff(e, 'anchored');
+  function cardTargets(S, c) {
     const out = [];
-    if (!c || S.phase !== 'player') return out;
+    if (!c) return out;
     const P = S.player;
     const add = (x, y, kind, extra) => out.push(Object.assign({ x, y, kind }, extra));
     switch (c.k) {
@@ -313,11 +522,11 @@
       case 'shove':
         for (const [dx, dy] of D8) {
           const e = enemyAt(S, P.x + dx, P.y + dy);
-          if (e && !ENEMIES[e.type].heavy) add(e.x, e.y, 'push');
+          if (e && !immovable(e)) add(e.x, e.y, 'push');
         }
         break;
       case 'swap':
-        for (const e of alive(S)) if (!ENEMIES[e.type].boss && cheb(e, P) <= 3) add(e.x, e.y, 'swap');
+        for (const e of alive(S)) if (!ENEMIES[e.type].boss && !hasAff(e, 'anchored') && cheb(e, P) <= 3) add(e.x, e.y, 'swap');
         break;
       case 'whirl':
         add(P.x, P.y, 'self');
@@ -377,6 +586,19 @@
   }
   function damageEnemy(S, e, amt, ev, how) {
     if (!e || e.dead) return false;
+    if (how === 'burstp') {
+      if (hasAff(e, 'phantom')) { ev.push({ t: 'text', x: e.x, y: e.y, s: '幽影' }); return false; }
+      how = 'player';
+    }
+    if (hasAff(e, 'phantom') && how === 'enemy') {
+      ev.push({ t: 'text', x: e.x, y: e.y, s: '幽影' });
+      return false;
+    }
+    if (e.shield > 0 && amt > 0) {
+      e.shield = 0;
+      ev.push({ t: 'shield', uid: e.uid, x: e.x, y: e.y });
+      return false;
+    }
     e.hp -= amt;
     ev.push({ t: 'hit', uid: e.uid, x: e.x, y: e.y, amt });
     if (e.hp <= 0) { killEnemy(S, e, ev, how || 'player'); return true; }
@@ -387,7 +609,7 @@
     e.dead = true; e.hp = 0; e.intent = null;
     const enemyPhase = S.phase === 'enemy';
     ev.push({ t: 'die', uid: e.uid, x: e.x, y: e.y, how });
-    if (e.type === 'puffer' && how !== 'pit' && how !== 'boss') {
+    if ((e.type === 'puffer' || hasAff(e, 'volatile')) && how !== 'pit' && how !== 'boss') {
       const tiles = D8.map(([dx, dy]) => [e.x + dx, e.y + dy]).filter(([x, y]) => inb(x, y) && tileAt(S, x, y) !== '#');
       ev.push({ t: 'atk', uid: e.uid, k: 'burst', tiles });
       ev.push({ t: 'text', x: e.x, y: e.y, s: '砰！', c: 'gold' });
@@ -395,8 +617,13 @@
       for (const [x, y] of tiles) {
         const o = entityAt(S, x, y);
         if (o === 'P') damagePlayer(S, dmg, ev);
-        else if (o) damageEnemy(S, o, dmg, ev, enemyPhase ? 'enemy' : 'player');
+        else if (o) damageEnemy(S, o, dmg, ev, enemyPhase ? 'enemy' : 'burstp');
       }
+    }
+    if (hasAff(e, 'split') && how !== 'pit' && how !== 'boss') {
+      const spots = shuffle(S, D8.map(([dx, dy]) => ({ x: e.x + dx, y: e.y + dy })).filter((t) => isEmpty(S, t.x, t.y)));
+      ev.push({ t: 'text', x: e.x, y: e.y, s: '分裂！', c: 'violet' });
+      for (const t of spots.slice(0, 2)) spawnEnemy(S, 'imp', t.x, t.y, ev, true, false);
     }
     if (how === 'self') return;
     S.stats.kills++;
@@ -442,7 +669,7 @@
   }
   function pushEnemy(S, e, dx, dy, dist, ev) {
     if (!e || e.dead) return;
-    if (ENEMIES[e.type].heavy) { ev.push({ t: 'text', x: e.x, y: e.y, s: '紋風不動' }); return; }
+    if (immovable(e)) { ev.push({ t: 'text', x: e.x, y: e.y, s: '紋風不動' }); return; }
     const how = S.phase === 'enemy' ? 'enemy' : 'player';
     for (let m = 0; m < dist; m++) {
       const nx = e.x + dx, ny = e.y + dy;
@@ -469,7 +696,7 @@
   }
 
   function prick(S, e, ev) {
-    if (e.type !== 'spiker') return;
+    if (e.type !== 'spiker' && !hasAff(e, 'thorny')) return;
     ev.push({ t: 'text', x: S.player.x, y: S.player.y, s: '被刺！' });
     damagePlayer(S, 1, ev);
   }
@@ -487,7 +714,8 @@
           const killed = damageEnemy(S, e, cardDmg(S, c, { dist }), ev);
           prick(S, e, ev);
           if (S.hp <= 0) break;
-          if (killed) movePlayer(S, tg.x, tg.y, ev, 'step');
+          // 連鎖反應（分裂）可能讓目標格又站了東西：那就停在原地
+          if (killed) { if (!enemyAt(S, tg.x, tg.y)) movePlayer(S, tg.x, tg.y, ev, 'step'); }
           else if (c.k === 'rook' && c.plus) pushEnemy(S, e, dx, dy, 1, ev);
         } else movePlayer(S, tg.x, tg.y, ev, 'slide');
         break;
@@ -500,7 +728,7 @@
           const killed = damageEnemy(S, e, cardDmg(S, c, {}), ev);
           prick(S, e, ev);
           if (S.hp <= 0) break;
-          if (killed) { movePlayer(S, tg.x, tg.y, ev, 'jump'); landed = true; }
+          if (killed && !enemyAt(S, tg.x, tg.y)) { movePlayer(S, tg.x, tg.y, ev, 'jump'); landed = true; }
         } else { movePlayer(S, tg.x, tg.y, ev, 'jump'); landed = true; }
         if (landed) {
           if (c.plus) {
@@ -580,7 +808,51 @@
       if (S.chain >= 2) S.score += 10 * (S.chain - 1);
       ev.push({ t: 'chain', n: S.chain });
     }
-    return { killed, cont: S.hp > 0 && (killed || isQuick(c)) };
+    return { killed, cont: S.hp > 0 && (killed || isQuick(c) || (hasMod(S, 'surge') && S.turn === 1)) };
+  }
+
+  /* ---------- 主動技能 ---------- */
+  function skillTargets(S, si) {
+    const sk = S.skills && S.skills[si];
+    if (!sk || S.phase !== 'player' || sk.left > 0) return [];
+    const d = SKILLS[sk.id];
+    if (d.card) return cardTargets(S, d.card);
+    if (d.target === 'enemy') return alive(S).filter((e) => e.intent).map((e) => ({ x: e.x, y: e.y, kind: 'seal' }));
+    if (sk.id === 'mend' && S.hp >= S.maxHp) return [];
+    return [{ x: S.player.x, y: S.player.y, kind: 'self' }];
+  }
+  function applySkill(S, si, x, y, ev) {
+    const tg = skillTargets(S, si).find((t) => t.x === x && t.y === y);
+    if (!tg) return null;
+    const sk = S.skills[si], d = SKILLS[sk.id];
+    sk.left = d.cd;
+    const k0 = S.turnKills;
+    ev.push({ t: 'skill', id: sk.id });
+    if (d.card) doCard(S, d.card, tg, ev);
+    else if (sk.id === 'redraw') { S.discard.push(...S.hand); S.hand = []; drawTo(S, handSize(S), ev); }
+    else if (sk.id === 'mend') healPlayer(S, 1, ev);
+    else if (sk.id === 'seal') {
+      const e = enemyAt(S, x, y);
+      if (e) { e.intent = null; ev.push({ t: 'text', x: e.x, y: e.y, s: '封印', c: 'violet' }); }
+    }
+    cleanup(S);
+    const killed = S.turnKills > k0;
+    if (killed) {
+      S.chain++;
+      S.stats.bestChain = Math.max(S.stats.bestChain, S.chain);
+      if (S.chain >= 2) S.score += 10 * (S.chain - 1);
+      ev.push({ t: 'chain', n: S.chain });
+    }
+    return { killed, cont: S.hp > 0 };
+  }
+  function useSkill(S, si, x, y) {
+    if (S.phase !== 'player') return null;
+    const ev = [];
+    const r = applySkill(S, si, x, y, ev);
+    if (!r) return null;
+    if (S.hp <= 0) return ev;
+    checkClear(S, ev);
+    return ev;
   }
 
   function playCard(S, hi, x, y) {
@@ -612,6 +884,8 @@
     ev.push({ t: 'phase', p: 'enemy' });
     resolveAttacks(S, ev); cleanup(S);
     if (S.hp <= 0) return;
+    resolveFire(S, ev); cleanup(S);
+    if (S.hp <= 0) return;
     resolveCracks(S, ev); cleanup(S);
     if (S.hp <= 0) return;
     resolveSpawns(S, ev); cleanup(S);
@@ -623,6 +897,10 @@
       enemyTurn(S, e, ev, !fresh);
     }
     cleanup(S);
+    for (const e of S.enemies) {
+      if (hasAff(e, 'regen') && e.hp < e.maxHp) { e.hp++; ev.push({ t: 'eheal', uid: e.uid, x: e.x, y: e.y }); }
+    }
+    for (const sk of S.skills || []) if (sk.left > 0) sk.left--;
     placeSpawnMarkers(S, ev);
     placeCracks(S, ev);
     S.turn++; S.stats.turns++;
@@ -641,13 +919,32 @@
     }
   }
 
+  function resolveFire(S, ev) {
+    if (!S.fire || !S.fire.length) return;
+    const hit = [];
+    for (const i of S.fire) {
+      const x = i % W, y = (i / W) | 0;
+      if (entityAt(S, x, y)) hit.push([x, y]);
+    }
+    if (!hit.length) return;
+    ev.push({ t: 'burn', tiles: hit });
+    for (const [x, y] of hit) {
+      const o = entityAt(S, x, y);
+      if (o === 'P') damagePlayer(S, 1, ev);
+      else if (o) damageEnemy(S, o, 1, ev, 'fire');
+      if (S.hp <= 0) return;
+    }
+  }
+
   // 深淵上升：超過標準回合後，地面開始崩塌（提前一回合標示）
+  const collapseTurn = (S) => S.collapseAt || S.par;
   function placeCracks(S, ev) {
-    if (S.turn < S.par) return;
+    const at = collapseTurn(S);
+    if (S.turn < at) return;
     let floors = 0;
     for (const t of S.tiles) if (t === '.') floors++;
-    const n = Math.min(3, 1 + Math.floor((S.turn - S.par) / 3));
-    if (S.turn === S.par) ev.push({ t: 'log', s: '深淵開始上升，地面即將崩塌！' });
+    const n = Math.min(3, 1 + Math.floor((S.turn - at) / 3));
+    if (S.turn === at) ev.push({ t: 'log', s: '深淵開始上升，地面即將崩塌！' });
     for (let i = 0; i < n && floors - S.cracks.length > 4; i++) {
       const c = [];
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -676,6 +973,7 @@
     for (const k of list) {
       S.tiles[idx(k.x, k.y)] = 'o';
       S.spawns = S.spawns.filter((sp) => sp.x !== k.x || sp.y !== k.y);
+      if (S.fire) S.fire = S.fire.filter((i) => i !== idx(k.x, k.y));
       const o = entityAt(S, k.x, k.y);
       if (o === 'P') {
         damagePlayer(S, 2, ev);
@@ -717,9 +1015,17 @@
     S.lastFlawless = S.floorDmg === 0;
     if (S.lastPar) S.score += 50;
     if (S.lastFlawless) S.score += 50;
-    if (S.boss && S.floor === 10 && !S.won) { S.won = true; S.justWon = true; }
+    if (!endless(S) && S.boss && S.floor === 10 && !S.won) { S.won = true; S.justWon = true; }
+    // 魂晶：無盡之塔越高越值錢；故事模式也給一點，兩邊的進度是相通的
+    let gain;
+    if (endless(S)) {
+      gain = Math.round((3 + S.floor * 0.8) * ((S.door && S.door.bounty) || 1));
+      if (S.boss) gain += 10 + S.floor;
+      if (S.floor % 10 === 0) gain += 20;
+    } else gain = 2 + (S.boss ? 10 : 0) + (S.justWon ? 30 : 0);
+    S.shards += gain; S.lastShards = gain;
     S.rewards = genRewards(S);
-    ev.push({ t: 'clear', floor: S.floor });
+    ev.push({ t: 'clear', floor: S.floor, shards: gain });
     return true;
   }
 
@@ -783,10 +1089,10 @@
         for (const [x, y, type] of it.tiles) push(x, y, 0, 'summon', { type });
         break;
       case 'leap':
-        push(it.x, it.y, 2, 'hit', { land: true });
+        push(it.x, it.y, it.dmg || 2, 'hit', { land: true });
         for (const [dx, dy] of D8) {
           const x = it.x + dx, y = it.y + dy;
-          if (tileAt(S, x, y) !== '#' && !(x === e.x && y === e.y)) push(x, y, 1, 'hit');
+          if (tileAt(S, x, y) !== '#' && !(x === e.x && y === e.y)) push(x, y, (it.dmg || 2) - 1, 'hit');
         }
         break;
       case 'beam':
@@ -896,7 +1202,7 @@
         const o = entityAt(S, it.x, it.y);
         if (o === 'P') {
           ev.push({ t: 'atk', uid: e.uid, k: 'leap', tiles: [[it.x, it.y]] });
-          damagePlayer(S, 2, ev);
+          damagePlayer(S, it.dmg || 2, ev);
         } else {
           if (o) killEnemy(S, o, ev, 'enemy');
           e.x = it.x; e.y = it.y;
@@ -904,7 +1210,7 @@
         }
         if (S.hp <= 0) break;
         ev.push({ t: 'atk', uid: e.uid, k: 'slam', tiles: ring });
-        for (const [x, y] of ring) if (!(x === e.x && y === e.y)) hitTile(S, x, y, 1, ev, e);
+        for (const [x, y] of ring) if (!(x === e.x && y === e.y)) hitTile(S, x, y, (it.dmg || 2) - 1, ev, e);
         break;
       }
       case 'beam': {
@@ -991,7 +1297,9 @@
 
   function enemyTurn(S, e, ev, canMove) {
     enemyThink(S, e, ev, canMove);
-    if (e.elite && e.intent && e.intent.dmg) e.intent.dmg += 1;
+    // 疾行：再想一次（多走一步，重新鎖定攻擊）
+    if (canMove && hasAff(e, 'swift') && !e.stun && affixAllowed(e.type, 'swift')) enemyThink(S, e, ev, true);
+    if (e.intent && e.intent.dmg) e.intent.dmg += (e.elite ? 1 : 0) + (hasAff(e, 'fierce') ? 1 : 0) + (e.dmgUp || 0);
   }
   function enemyThink(S, e, ev, canMove) {
     const P = S.player;
@@ -1076,7 +1384,7 @@
           s += rnd(S) * 0.5;
           if (s > bs) { bs = s; best = pos; }
         }
-        if (best) e.intent = { k: 'leap', x: best.x, y: best.y };
+        if (best) e.intent = { k: 'leap', x: best.x, y: best.y, dmg: 2 };
         break;
       }
       case 'qboss': {
@@ -1114,7 +1422,8 @@
     return { t: 'card', k, plus: S.floor >= 6 && rnd(S) < 0.3 };
   }
   function genRewards(S) {
-    const n = 3 + (has(S, 'gambler') ? 1 : 0) + (S.lastPar ? 1 : 0);
+    const door = S.door || {};
+    const n = 3 + (has(S, 'gambler') ? 1 : 0) + (S.lastPar ? 1 : 0) + (door.extra || 0);
     let opts = [];
     if (S.boss) {
       opts = relicOpts(S, n);
@@ -1128,11 +1437,48 @@
     else if (r < 0.66) opts.push(S.hp < S.maxHp ? { t: 'heal', n: 2 } : { t: 'maxhp', n: 1 });
     else if (r < 0.84 && S.deck.length > 5) opts.push({ t: 'remove' });
     else opts.push({ t: 'maxhp', n: 1 });
+    if (door.relic && !opts.some((o) => o.t === 'relic')) { const ro = relicOpts(S, 1); if (ro.length) opts.push(ro[0]); }
     while (opts.length < n) opts.push(cardOpt(S, opts.filter((o) => o.t === 'card').map((o) => o.k)));
     return opts;
   }
+  // 跳關時的起始補給
+  function genDraft(S) {
+    const n = 3 + (has(S, 'gambler') ? 1 : 0);
+    if (S.draftLeft % 3 === 0) {
+      const opts = relicOpts(S, n);
+      while (opts.length < n) opts.push({ t: 'maxhp', n: 1 });
+      return opts;
+    }
+    const opts = [cardOpt(S, [])];
+    if (S.deck.some((id) => !S.cards[id].plus)) opts.push({ t: 'upgrade' });
+    if (S.draftLeft % 3 === 2 && S.deck.length > 5) opts.push({ t: 'remove' });
+    while (opts.length < n) opts.push(cardOpt(S, opts.filter((o) => o.t === 'card').map((o) => o.k)));
+    return opts;
+  }
+  // 選門：越危險的門，魂晶越多、獎勵越好
+  function pickMods(S, n, good) {
+    const next = S.floor + 1;
+    const pool = shuffle(S, Object.keys(MODS).filter((m) => MODS[m].bad === !good && MODS[m].from <= next));
+    return pool.slice(0, n);
+  }
+  function genDoors(S) {
+    const next = S.floor + 1;
+    if (next % 5 === 0) {
+      return [{ boss: true, mods: next >= 15 ? pickMods(S, 1, false) : [], bounty: 1.5, extra: 0, relic: true }];
+    }
+    const doors = [{ tier: 0, mods: rnd(S) < 0.5 ? pickMods(S, 1, true) : [], bounty: 1, extra: 0 }];
+    doors.push({ tier: 1, mods: pickMods(S, 1, false), bounty: 1.5, extra: 1 });
+    if (next >= 3) doors.push({ tier: 2, mods: pickMods(S, 2, false), bounty: 2.2, extra: 1, relic: true });
+    return doors;
+  }
+  function chooseDoor(S, i) {
+    if (S.phase !== 'door' || !S.doors || !S.doors[i]) return null;
+    const ev = [];
+    startFloor(S, S.floor + 1, ev, S.doors[i]);
+    return ev;
+  }
   function applyReward(S, i, param) {
-    if (S.phase !== 'reward' || !S.rewards) return null;
+    if ((S.phase !== 'reward' && S.phase !== 'draft') || !S.rewards) return null;
     const ev = [];
     if (i >= 0) {
       const o = S.rewards[i];
@@ -1153,7 +1499,13 @@
       }
     } else S.score += 20; // 略過獎勵
     S.justWon = false;
-    startFloor(S, S.floor + 1, ev);
+    if (S.phase === 'draft') {
+      S.draftLeft--;
+      if (S.draftLeft > 0) { S.rewards = genDraft(S); return ev; }
+    }
+    S.rewards = null;
+    if (endless(S)) { S.phase = 'door'; S.doors = genDoors(S); return ev; }
+    startFloor(S, S.floor + 1, ev, null);
     return ev;
   }
 
@@ -1164,16 +1516,20 @@
     const before = T.hp; const ev = [];
     T.phase = 'enemy';
     resolveAttacks(T, ev); cleanup(T);
+    if (T.hp > 0) { resolveFire(T, ev); cleanup(T); }
     if (T.hp > 0) { resolveCracks(T, ev); cleanup(T); }
     if (T.hp > 0) resolveSpawns(T, ev);
     return Math.max(0, before - T.hp);
   }
-  function preview(S, hi, x, y) {
+  // a：手牌索引（數字），或 { si } 表示技能
+  function preview(S, a, x, y) {
     const T = clone(S); const ev = [];
     let r;
-    if (hi < 0) r = { killed: false, cont: false };
-    else { r = applyCard(T, hi, x, y, ev); if (!r) return null; }
-    const res = { T, killed: r.killed, cont: r.cont && T.hand.length > 0, cleared: false, dmg: 0, dead: T.hp <= 0, kills: [] };
+    const isSkill = a && typeof a === 'object';
+    if (isSkill) { r = applySkill(T, a.si, x, y, ev); if (!r) return null; }
+    else if (a < 0) r = { killed: false, cont: false };
+    else { r = applyCard(T, a, x, y, ev); if (!r) return null; }
+    const res = { T, killed: r.killed, cont: r.cont && (isSkill || T.hand.length > 0), cleared: false, dmg: 0, dead: T.hp <= 0, kills: [] };
     const aliveAfter = new Set(alive(T).map((e) => e.uid));
     res.kills = alive(S).filter((e) => !aliveAfter.has(e.uid)).map((e) => e.uid);
     if (!res.dead && !alive(T).length && !T.spawns.length && !T.reserve.length) { res.cleared = true; return res; }
@@ -1189,8 +1545,9 @@
   }
 
   root.Engine = {
-    W, H, D8, KN, CARDS, ENEMIES, RELICS, HEROES,
-    newRun, legalTargets, playCard, waitTurn, canWait, applyReward, computeThreats, intentArea, preview,
-    isQuick, handSize, hashStr, idx, inb, alive, tileAt, has,
+    W, H, D8, KN, CARDS, ENEMIES, RELICS, HEROES, SKILLS, AFFIXES, MODS, TOWER,
+    newRun, legalTargets, cardTargets, playCard, waitTurn, canWait, applyReward, chooseDoor, computeThreats, intentArea, preview,
+    skillTargets, useSkill, budgetOf, buildCost, validateBuild, draftPicks,
+    isQuick, handSize, hashStr, idx, inb, alive, tileAt, has, hasMod, hasAff, collapseTurn,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
