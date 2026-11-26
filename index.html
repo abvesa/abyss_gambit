@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- GAME-BODY-START -->
+<title>棋淵</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@700;900&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="app">
+  <header class="hud">
+    <div class="brand" aria-label="棋淵">棋淵</div>
+    <div class="hp" id="hp" aria-label="生命"></div>
+    <div class="stats">
+      <div class="stat"><span class="lbl">深度</span><b id="floor">1</b></div>
+      <div class="stat" id="turnStat"><span class="lbl">回合</span><b id="turn">1</b><span class="sub" id="par"></span></div>
+      <div class="stat"><span class="lbl">分數</span><b id="score">0</b></div>
+    </div>
+    <div class="relics" id="relics"></div>
+    <nav class="hud-btns">
+      <button id="btnDeck" class="chip" type="button">牌組</button>
+      <button id="btnSpeed" class="chip" type="button" title="動畫速度">1×</button>
+      <button id="btnSound" class="chip" type="button">音效</button>
+      <button id="btnHelp" class="chip" type="button">規則</button>
+      <button id="btnMenu" class="chip" type="button">選單</button>
+    </nav>
+  </header>
+
+  <section class="board-col">
+    <div class="board-frame" id="frame">
+      <div class="ranks" aria-hidden="true"><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span></div>
+      <div id="board" class="board">
+        <div id="cells" class="cells"></div>
+        <div id="ghosts" class="pieces ghosts"></div>
+        <div id="pieces" class="pieces"></div>
+        <div id="fx" class="fx"></div>
+        <div id="banner" class="banner" hidden></div>
+      </div>
+      <div class="files" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span></div>
+    </div>
+    <div id="hint" class="hint" role="status"></div>
+  </section>
+
+  <footer class="tray">
+    <div class="pile" id="pile"></div>
+    <div class="hand" id="hand"></div>
+    <div class="tray-actions">
+      <button id="btnUndo" class="btn ghost" type="button" title="同一回合內收回免費；退回上一回合會消耗次數">回溯 <kbd>Z</kbd> <span id="undoLeft"></span></button>
+      <button id="btnEnd" class="btn primary" type="button">結束回合 <kbd>空白</kbd></button>
+    </div>
+  </footer>
+
+  <aside class="side">
+    <div id="info" class="info"></div>
+    <ol id="log" class="log"></ol>
+  </aside>
+</div>
+
+<div id="overlay" class="overlay" hidden><div class="panel" id="panel"></div></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="engine.js"></script>
+<script src="ui.js"></script>
+<!-- GAME-BODY-END -->
+</body>
+</html>
