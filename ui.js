@@ -1080,12 +1080,25 @@
           <span class="m-desc">自訂角色的能力、技能、遺物與牌組，看你的構築能爬多高。每次攀登都會帶回魂晶。</span>
           <span class="m-rec">最高 <b>第 ${meta.towerBest} 層</b> · 魂晶 <b>${meta.shards}</b></span></button>
       </div>
-      <div class="title-actions"><button type="button" class="btn ghost" data-action="help">規則</button></div>
+      <div class="title-actions"><button type="button" class="btn ghost" data-action="help">規則</button><button type="button" class="btn ghost" data-action="reset">清除紀錄</button></div>
     </div>`, (a) => {
       if (a === 'resume') resumeGame(sv);
       if (a === 'story') showStory();
       if (a === 'tower') showTower();
       if (a === 'help') showHelp(showTitle);
+      if (a === 'reset') showReset();
+    });
+  }
+  // 清除所有存檔：先確認，清完重新載入，回到全新的狀態
+  function showReset() {
+    openOverlay(`<div class="center"><div class="eyebrow">清除紀錄</div>
+      <h2>確定要清除所有紀錄嗎？</h2>
+      <p class="muted">會刪掉：魂晶 <b>${meta.shards}</b>、工坊解鎖 <b>${meta.towerUnl.length}</b> 項、命盤構築、角色解鎖、最高分與最高樓層、每日挑戰紀錄，以及進行中的那一局。</p>
+      <p class="warn">清除之後無法復原。音效與動畫速度的設定也會回到預設。</p>
+      <div class="title-actions"><button type="button" class="btn ghost" data-action="cancel">取消</button><button type="button" class="btn danger" data-action="wipe">確定清除</button></div></div>`,
+    (a) => {
+      if (a === 'cancel') showTitle();
+      if (a === 'wipe') { store.del(META_KEY); store.del(RUN_KEY); location.reload(); }
     });
   }
 

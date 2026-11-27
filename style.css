@@ -247,6 +247,9 @@ kbd { font: 500 11px var(--f-mono); padding: 1px 5px; border-radius: 4px; border
 .btn.primary { background: linear-gradient(180deg, var(--gold), var(--gold-deep)); color: var(--ink); border-color: transparent; font-weight: 700; }
 .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .btn.ghost { background: transparent; }
+.btn.danger { background: var(--blood); color: #fff; border-color: transparent; font-weight: 700; }
+.btn.danger:hover:not(:disabled) { filter: brightness(1.1); }
+.center p.warn { color: var(--blood); }
 .btn.big { padding: 12px 22px; font-size: 16px; }
 .btn.pulse { animation: btnPulse 1.4s ease-in-out infinite; }
 @keyframes btnPulse { 50% { box-shadow: 0 0 0 4px rgba(230, 180, 80, .3); } }
