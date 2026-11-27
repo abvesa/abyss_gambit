@@ -99,6 +99,8 @@
   const hasSel = () => sel >= 0 || selSkill >= 0;
   let busy = false, runRecorded = false, dispHp = 0, comboKills = 0, animBase = null;
   const touch = window.matchMedia && matchMedia('(hover: none)').matches;
+  // 從主畫面打開（全螢幕 web app）：iOS 用 navigator.standalone，其他用 display-mode
+  if (navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches)) document.documentElement.classList.add('standalone');
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   let speed = meta.fast ? 0.55 : 1;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms * speed));

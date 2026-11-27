@@ -44,6 +44,8 @@ node tests/sim.js 60 15         # 故事模式：隨機機器人 + 貪婪機器�
 node tests/sim.js 15 60 tower   # 無盡之塔：基本構築與強力構築各爬幾次
 ```
 
+改完 CSS / JS 要上線時，記得把 `index.html` 裡 `?v=6` 的數字加一，手機（尤其是加到主畫面的版本）才不會一直用舊的快取。
+
 想調難度，主要旋鈕都在 `engine.js`：
 
 - `startFloor` 裡的 `budget`（每層敵人數量）與 `S.par`（標準回合數）
