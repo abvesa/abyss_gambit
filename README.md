@@ -2,9 +2,13 @@
 
 一個「每張牌都是一種棋步」的回合制 roguelike 解謎遊戲。純 HTML / CSS / JavaScript，不需要安裝或建置。
 
+**▶ 立即遊玩：https://abvesa.github.io/abyss_gambit/**（電腦、手機瀏覽器都可以；iPhone 可用 Safari「加入主畫面」全螢幕遊玩）
+
 ## 怎麼玩
 
-直接用瀏覽器打開 `index.html` 就能玩（進度存在瀏覽器的 localStorage）。
+打開上面的連結，或直接用瀏覽器打開本機的 `index.html`。進度存在各自瀏覽器的 localStorage，手機和電腦的進度不互通。
+
+手機操作：點牌 → 點落點預覽 → 再點一次確認；點敵人看它的行為，長按牌或技能看說明。
 
 核心規則：
 
