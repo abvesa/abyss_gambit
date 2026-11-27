@@ -49,7 +49,7 @@ node tests/sim.js 30 60 tower push     # 只跑某個流派（逗號分隔）
 DIAG=1 node tests/sim.js 15 60 tower   # 另外統計玩家的傷害來源
 ```
 
-改完 CSS / JS 要上線時，記得把 `index.html` 裡 `?v=6` 的數字加一，手機（尤其是加到主畫面的版本）才不會一直用舊的快取。
+改完 CSS / JS 要上線時，記得把 `index.html` 裡 `?v=` 後面的數字加一，手機（尤其是加到主畫面的版本）才不會一直用舊的快取。
 
 想調難度，主要旋鈕都在 `engine.js`：
 
