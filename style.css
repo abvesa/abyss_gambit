@@ -231,11 +231,12 @@ kbd { font: 500 11px var(--f-mono); padding: 1px 5px; border-radius: 4px; border
 .hint.bad { color: var(--blood); font-weight: 700; }
 
 /* ---------- 手牌托盤 ---------- */
-.tray { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; align-items: end; gap: 14px; width: calc(var(--bs) + 40px); justify-self: center; max-width: 100%; }
+.tray { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 14px; width: calc(var(--bs) + 40px); justify-self: center; max-width: 100%; }
 .pile { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; align-self: center; }
 .pile b { font: 700 15px var(--f-mono); color: var(--bone); }
 .pile .next { font: 700 13px var(--f-display); color: var(--gold); letter-spacing: .1em; }
 .hand { display: flex; gap: 10px; justify-content: center; min-height: 136px; align-items: flex-end; }
+.hand > .card { flex: 0 1 94px; min-width: 0; }
 .hand-empty { color: var(--muted); align-self: center; font-size: 13px; }
 .tray-actions { display: flex; flex-direction: column; gap: 6px; align-self: center; }
 .btn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 10px; padding: 9px 14px; cursor: pointer; white-space: nowrap; font-weight: 500; transition: background .15s, border-color .15s, transform .1s; }
@@ -311,7 +312,7 @@ kbd { font: 500 11px var(--f-mono); padding: 1px 5px; border-radius: 4px; border
 
 /* ---------- 疊層畫面 ---------- */
 .overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(8, 9, 15, .72); backdrop-filter: blur(5px); padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); overflow-y: auto; }
-.panel { width: min(780px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: 18px; padding: 26px 26px 22px; box-shadow: 0 30px 80px rgba(0, 0, 0, .6); animation: panelIn .25s ease-out; }
+.panel { width: min(780px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: 18px; padding: 26px 26px 22px; box-shadow: 0 30px 80px rgba(0, 0, 0, .6); animation: panelIn .25s ease-out; }
 @keyframes panelIn { from { transform: translateY(12px) scale(.98); opacity: 0; } }
 .panel h2 { font: 900 28px/1.2 var(--f-display); margin: 0 0 6px; text-wrap: balance; }
 .eyebrow { font-size: 11px; letter-spacing: .3em; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
@@ -374,19 +375,7 @@ kbd { font: 500 11px var(--f-mono); padding: 1px 5px; border-radius: 4px; border
 body.busy .card, body.busy .cell { cursor: progress; }
 
 @media (max-width: 560px) {
-  .hud { gap: 6px 12px; }
-  .brand { font-size: 22px; }
-  .hud-btns { margin-left: 0; width: 100%; }
-  .tray { grid-template-columns: 1fr auto; grid-template-areas: "hand hand" "pile actions"; width: 100%; gap: 10px; }
-  .hand { grid-area: hand; gap: 6px; min-height: 116px; }
-  .pile { grid-area: pile; flex-direction: row; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .tray-actions { grid-area: actions; flex-direction: row; }
-  .card { width: 76px; height: 110px; padding: 6px 4px; }
-  .card .glyph { font-size: 28px; }
-  .pat { grid-template-columns: repeat(5, 7px); grid-template-rows: repeat(5, 7px); }
-  .board-frame { padding: 6px 8px 4px 4px; grid-template-columns: 12px var(--bs); grid-template-rows: var(--bs) 12px; gap: 3px; }
   .panel { padding: 20px 16px 18px; }
-  .btn { padding: 8px 11px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -523,3 +512,110 @@ body.busy .card, body.busy .cell { cursor: progress; }
 .pk-ico.c-card { background: linear-gradient(175deg, var(--paper), var(--paper-2)) !important; color: var(--ink) !important; }
 .pk-ico.c-skill { background: #3a2d6e !important; color: #e2d7ff !important; }
 .pk-ico.c-gold { background: linear-gradient(180deg, var(--gold), var(--gold-deep)) !important; color: var(--ink) !important; font-family: var(--f-mono) !important; font-size: 13px !important; }
+
+/* ================= 手機 ================= */
+html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+.hud, .board-col, .tray { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.mod { -webkit-touch-callout: none; }
+
+/* 觸控裝置：鍵盤提示沒有意義 */
+@media (hover: none) {
+  .tray kbd, .skill kbd, .card .key, .keys { display: none; }
+  .card:hover, .door:hover { transform: none; }
+  .card.sel { transform: translateY(-10px); }
+}
+
+/* 手機直向 + 手機橫向共用：精簡 HUD 與托盤 */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 520px) {
+  .hud { gap: 4px 10px; }
+  .brand { font-size: 20px; order: 1; }
+  .hp { order: 2; font-size: 16px; gap: 1px; }
+  .hud-btns { order: 3; margin-left: auto; width: auto; gap: 5px; }
+  .hud::after { content: ""; order: 4; flex-basis: 100%; height: 0; }
+  .stats { order: 5; gap: 12px; }
+  .mods { order: 6; }
+  .relics { order: 7; }
+  .stat .lbl { font-size: 10px; letter-spacing: .08em; }
+  .stat b { font-size: 15px; }
+  .relic { width: 22px; height: 22px; font-size: 13px; }
+  #btnSpeed, #btnSound, #btnHelp { display: none; }
+  .chip { padding: 4px 10px; }
+
+  .hint { font-size: 12.5px; line-height: 1.45; min-height: 2.9em; display: flex; align-items: center; justify-content: center; }
+
+  .tray { width: 100%; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "pile pile pile" "hand hand hand" "skills undo end"; gap: 8px 6px; align-items: center; }
+  .tray-actions { display: contents; }
+  .pile { grid-area: pile; flex-direction: row; gap: 12px; justify-content: center; font-size: 11px; }
+  .pile b { font-size: 12px; }
+  .hand { grid-area: hand; gap: 6px; min-height: 0; padding-top: 10px; }
+  .skills { grid-area: skills; justify-self: start; }
+  .skill { min-width: 50px; padding: 4px 6px 3px; }
+  #btnUndo { grid-area: undo; }
+  #btnEnd { grid-area: end; }
+  .tray .btn { padding: 10px 12px; }
+  .card { flex: 0 1 76px; min-width: 0; width: 76px; height: 108px; padding: 6px 4px; }
+  .card .glyph { font-size: 28px; }
+  .pat { grid-template-columns: repeat(5, 7px); grid-template-rows: repeat(5, 7px); }
+  .board-frame { padding: 6px 8px 4px 4px; grid-template-columns: 12px var(--bs); grid-template-rows: var(--bs) 12px; gap: 3px; border-radius: 12px; }
+  .ranks, .files { font-size: 9px; }
+}
+
+/* 手機直向：棋盤 + 手牌 + 結束回合 一個畫面放得下 */
+@media (max-width: 600px) {
+  :root {
+    --bs: clamp(236px, min(calc(100vw - 40px), calc(100vh - 340px)), 520px);
+    --bs: clamp(236px, min(calc(100vw - 40px), calc(100dvh - 340px)), 520px);
+  }
+  .app { padding-left: max(10px, env(safe-area-inset-left, 0px)); padding-right: max(10px, env(safe-area-inset-right, 0px)); padding-block: max(8px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-bottom, 0px)); gap: 6px; }
+  .side { margin-top: 10px; }
+}
+@media (max-width: 600px) and (max-height: 700px) {
+  :root {
+    --bs: clamp(230px, min(calc(100vw - 40px), calc(100vh - 312px)), 520px);
+    --bs: clamp(230px, min(calc(100vw - 40px), calc(100dvh - 312px)), 520px);
+  }
+  .card { height: 92px; }
+  .card .glyph { font-size: 24px; margin-top: 2px; }
+  .card .cname { font-size: 10px; }
+  .pat { grid-template-columns: repeat(5, 6px); grid-template-rows: repeat(5, 6px); }
+  .hand { padding-top: 6px; }
+}
+
+/* 手機橫向：棋盤在左，其他在右 */
+@media (orientation: landscape) and (max-height: 520px) {
+  :root {
+    --bs: clamp(200px, calc(100vh - 40px), 470px);
+    --bs: clamp(200px, calc(100dvh - 40px), 470px);
+  }
+  .app { max-width: none; grid-template-columns: calc(var(--bs) + 26px) minmax(0, 400px); grid-template-rows: auto auto 1fr; grid-template-areas: "board hud" "board hint" "board tray"; gap: 6px 18px; padding-block: 6px; min-height: 100vh; min-height: 100dvh; align-content: center; }
+  .board-col { display: contents; }
+  .board-frame { grid-area: board; align-self: center; }
+  .hint { grid-area: hint; max-width: none; }
+  .tray { align-self: start; }
+  .side { position: absolute; width: 0; height: 0; overflow: visible; }
+  .side .log, .side .info { display: none; }
+  body.peek .side .info { display: block; }
+  body.peek .side .info { left: auto; right: max(10px, env(safe-area-inset-right, 0px)); width: min(400px, calc(100vw - var(--bs) - 60px)); }
+  .card { height: 96px; }
+  .card .glyph { font-size: 25px; }
+  .pat { grid-template-columns: repeat(5, 6px); grid-template-rows: repeat(5, 6px); }
+  .hand { padding-top: 6px; }
+}
+
+/* 點敵人 / 長按牌：資訊從下方浮出 */
+@media (max-width: 900px), (orientation: landscape) and (max-height: 520px) {
+  body.peek .info {
+    position: fixed; z-index: 30; left: 0; right: 0; margin: 0 auto;
+    bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    width: min(520px, calc(100vw - 20px)); min-height: 0; max-height: 46vh; max-height: 46dvh; overflow-y: auto;
+    border-color: var(--gold); box-shadow: 0 -6px 40px rgba(0, 0, 0, .65); animation: peekIn .16s ease-out;
+  }
+  body.peek .info::after { content: "點任意處關閉"; display: block; margin-top: 8px; text-align: right; font-size: 11px; color: var(--muted); }
+}
+@keyframes peekIn { from { transform: translateY(16px); opacity: 0; } }
+@media (max-height: 520px) {
+  .logo { font-size: 54px; margin-top: 0; }
+  .logo-sub { margin: 4px 0 8px; }
+  .panel { padding: 16px 20px 14px; }
+  .panel h2 { font-size: 22px; }
+}

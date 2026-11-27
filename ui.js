@@ -106,6 +106,33 @@
   const cellsEl = $('#cells'), piecesEl = $('#pieces'), ghostsEl = $('#ghosts'), fxEl = $('#fx');
   const handEl = $('#hand'), hintEl = $('#hint'), infoEl = $('#info'), logEl = $('#log');
   const overlay = $('#overlay'), panel = $('#panel');
+  // 窄螢幕時資訊欄在畫面外：點敵人、長按牌時改成從下方浮出
+  const narrowMq = window.matchMedia ? matchMedia('(max-width: 900px), (orientation: landscape) and (max-height: 520px)') : null;
+  function peek(on) {
+    if (on && narrowMq && narrowMq.matches) document.body.classList.add('peek');
+    else if (!on) document.body.classList.remove('peek');
+  }
+  // 長按（觸控）：看說明，不觸發點擊
+  let lpTimer = 0, lpFired = false, lpStart = null;
+  document.addEventListener('pointerdown', (e) => {
+    lpFired = false;
+    if (document.body.classList.contains('peek') && !infoEl.contains(e.target)) peek(false);
+  }, true);
+  // 長按放開後瀏覽器可能補一個 click，落在剛浮出的資訊上，不能讓它馬上關掉
+  infoEl.addEventListener('click', () => { if (!eatLongPress()) peek(false); });
+  function longPress(container, sel, fn) {
+    container.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse') return;
+      const t = e.target.closest(sel); if (!t) return;
+      lpStart = { x: e.clientX, y: e.clientY };
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(() => { lpFired = true; fn(t); peek(true); if (navigator.vibrate) navigator.vibrate(12); }, 430);
+    });
+    container.addEventListener('pointermove', (e) => { if (lpStart && Math.hypot(e.clientX - lpStart.x, e.clientY - lpStart.y) > 10) clearTimeout(lpTimer); });
+    for (const k of ['pointerup', 'pointercancel', 'pointerleave']) container.addEventListener(k, () => clearTimeout(lpTimer));
+    container.addEventListener('contextmenu', (e) => { if (e.target.closest(sel)) e.preventDefault(); });
+  }
+  const eatLongPress = () => { if (lpFired) { lpFired = false; return true; } return false; };
   const cells = [];
   for (let i = 0; i < W * H; i++) { const c = mk('div', 'cell'); c.dataset.i = i; cellsEl.appendChild(c); cells.push(c); }
 
@@ -321,11 +348,13 @@
       if (!ok) n.classList.add('off');
       if (i === sel) n.classList.add('sel');
       n.setAttribute('aria-label', E.CARDS[c.k].name + (c.plus ? '+' : ''));
-      n.addEventListener('click', () => selectCard(i));
+      n.dataset.i = i;
+      n.addEventListener('click', () => { if (!eatLongPress()) selectCard(i); });
       n.addEventListener('mouseenter', () => showCardInfo(c));
       handEl.appendChild(n);
     });
   }
+  longPress(handEl, '.card', (n) => { if (S && S.hand[+n.dataset.i] != null) showCardInfo(S.cards[S.hand[+n.dataset.i]]); });
   function renderPile() {
     const p = $('#pile');
     if (!S || demo) { p.innerHTML = ''; return; }
@@ -348,12 +377,14 @@
     }).join('');
     if (box._h !== html) { box.innerHTML = html; box._h = html; }
   }
-  $('#skills').addEventListener('click', (e) => { const b = e.target.closest('[data-si]'); if (b) selectSkill(+b.dataset.si); });
-  $('#skills').addEventListener('mouseover', (e) => {
-    const b = e.target.closest('[data-si]'); if (!b || !S) return;
-    const d = E.SKILLS[S.skills[+b.dataset.si].id];
+  $('#skills').addEventListener('click', (e) => { const b = e.target.closest('[data-si]'); if (b && !eatLongPress()) selectSkill(+b.dataset.si); });
+  $('#skills').addEventListener('mouseover', (e) => { const b = e.target.closest('[data-si]'); if (b) showSkillInfo(+b.dataset.si); });
+  longPress($('#skills'), '[data-si]', (b) => showSkillInfo(+b.dataset.si));
+  function showSkillInfo(si) {
+    if (!S || !S.skills[si]) return;
+    const d = E.SKILLS[S.skills[si].id];
     infoEl.innerHTML = `<div class="info-head"><span class="info-ico relic-ico" style="background:#3a2d6e">${d.n}</span><div><b>${d.name}</b><small>技能 · 冷卻 ${d.cd} 回合</small></div></div><p>${d.desc}</p><p class="muted">技能不會結束回合，也不算「必須落子」的那一張牌。</p>`;
-  });
+  }
   function selectSkill(i) {
     if (!S || demo || busy || S.phase !== 'player' || !S.skills[i]) return;
     const sk = S.skills[i];
@@ -407,7 +438,13 @@
     $('#btnSpeed').textContent = speed < 1 ? '快速' : '正常';
   }
   $('#relics').addEventListener('mouseover', (e) => { const b = e.target.closest('[data-relic]'); if (b) showRelicInfo(b.dataset.relic); });
-  $('#relics').addEventListener('click', (e) => { const b = e.target.closest('[data-relic]'); if (b) showRelicInfo(b.dataset.relic); });
+  $('#relics').addEventListener('click', (e) => { const b = e.target.closest('[data-relic]'); if (b) { showRelicInfo(b.dataset.relic); peek(true); } });
+  function showModInfo(m) {
+    const d = E.MODS[m];
+    infoEl.innerHTML = `<div class="info-head">${modChip(m)}<div><b>${d.name}</b><small>${d.bad ? '樓層干擾' : '樓層祝福'}</small></div></div><p>${d.desc}</p>`;
+  }
+  $('#mods').addEventListener('mouseover', (e) => { const b = e.target.closest('[data-mod]'); if (b) showModInfo(b.dataset.mod); });
+  $('#mods').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) { showModInfo(b.dataset.mod); peek(true); } });
 
   function fullRender() {
     if (!S) return;
@@ -444,7 +481,7 @@
     let h = `<h4>${isTower() ? `無盡之塔 · 第 ${S.floor} 層${S.boss ? '（首領）' : ''}` : S.boss ? '首領層' : S.floor > 10 ? '無盡深淵' : '第 ' + S.floor + ' 層'}</h4>`;
     const boss = S.enemies.find((e) => E.ENEMIES[e.type].boss);
     if (boss) h += `<p>${E.ENEMIES[boss.type].name}：${E.ENEMIES[boss.type].desc}</p>`;
-    else h += `<p class="muted">敵人 ${S.enemies.length} · 增援 ${S.spawns.length + S.reserve.length}。滑過敵人看它的行為，滑過牌看它的走法。</p>`;
+    else h += `<p class="muted">敵人 ${S.enemies.length} · 增援 ${S.spawns.length + S.reserve.length}。${touch ? '點敵人看它的行為，長按牌或技能看說明。' : '滑過敵人看它的行為，滑過牌看它的走法。'}</p>`;
     if (S.mods && S.mods.length) h += S.mods.map((m) => `<p>${modChip(m)} ${E.MODS[m].desc}</p>`).join('');
     h += `<div class="legend"><span><i class="lg thr"></i>敵人攻擊</span><span><i class="lg tg"></i>可移動</span><span><i class="lg ta"></i>可攻擊</span><span><i class="lg sp"></i>增援點</span><span><i class="lg cr"></i>即將崩塌</span><span><i class="lg pit"></i>深淵</span></div>`;
     infoEl.innerHTML = h;
@@ -454,7 +491,7 @@
     const x = i % W, y = (i / W) | 0;
     const e = S.enemies.find((z) => !z.dead && z.x === x && z.y === y);
     const thr = E.computeThreats(S)[i];
-    let h = '';
+    let h = '', worth = !!e || (thr && thr.dmg > 0);
     if (e) {
       const d = E.ENEMIES[e.type];
       h += `<div class="info-head"><span class="info-ico">${d.icon}</span><div><b>${d.name}${e.elite ? ' <em class="elite-tag">精英</em>' : ''}</b><small>${coord(x, y)} · 生命 ${e.hp}/${e.maxHp}</small></div></div><p>${d.desc}</p>`;
@@ -470,6 +507,7 @@
       if (t === 'o') h += '<p>不能踩進去（跳躍類的牌可以越過）。被推進來的敵人會直接墜落。</p>';
       if (t === '#') h += '<p>阻擋移動與箭矢。把敵人推向石柱會造成 1 傷害。</p>';
       const sp = S.spawns.find((s) => s.x === x && s.y === y);
+      if (sp || t === 'o' || S.cracks.some((k) => k.x === x && k.y === y) || (S.fire && S.fire.includes(i))) worth = true;
       if (sp) h += `<p class="intent">增援點：回合結束時會出現${E.ENEMIES[sp.type].name}。站在上面可以擋下它，但會受到 1 傷害。</p>`;
       if (S.cracks.some((k) => k.x === x && k.y === y)) h += '<p style="color:var(--violet)">裂痕：回合結束時這格會崩塌成深淵，站在上面會受到 2 傷害。</p>';
       if (S.fire && S.fire.includes(i)) h += '<p style="color:var(--ember)">灼地：回合結束時站在這裡的人（包括敵人）受 1 傷害。</p>';
@@ -479,6 +517,7 @@
       h += `<p class="warn">注意：回合結束時這格會受到 ${thr.dmg} 傷害（${names.join('、')}）。</p>`;
     }
     infoEl.innerHTML = h;
+    return worth;
   }
   function showCardInfo(c) {
     const d = E.CARDS[c.k];
@@ -779,14 +818,14 @@
       const tg = actionTargets().find((t) => t.x === x && t.y === y);
       if (!tg) {
         sel = -1; selSkill = -1; pendingTap = null; hover = i; focusUid = enemyUidAt(x, y);
-        showTileInfo(i); refresh(); renderHand();
+        if (showTileInfo(i)) peek(true); refresh(); renderHand();
         return;
       }
       if (touch && pendingTap !== i) { pendingTap = i; hover = i; refresh(); return; }
       if (selSkill >= 0) doSkill(selSkill, x, y); else doPlay(sel, x, y);
     } else {
       hover = i; focusUid = enemyUidAt(x, y);
-      showTileInfo(i); refresh();
+      if (showTileInfo(i)) peek(true); refresh();
     }
   });
 
@@ -811,7 +850,7 @@
     await runEvents(ev, JSON.parse(snap));
   }
   async function runEvents(ev, pre) {
-    busy = true; sel = -1; selSkill = -1; hover = null; pendingTap = null; focusUid = null; curPreview = null;
+    busy = true; sel = -1; selSkill = -1; hover = null; pendingTap = null; focusUid = null; curPreview = null; peek(false);
     animBase = pre;
     document.body.classList.add('busy');
     ghostsEl.innerHTML = '';
@@ -945,7 +984,7 @@
   let overlayHandler = null, overlayClosable = false;
   function openOverlay(html, handler, closable, keepScroll) {
     const st = keepScroll ? panel.scrollTop : 0;
-    panel.innerHTML = html;
+    panel.innerHTML = html; peek(false);
     overlayHandler = handler; overlayClosable = !!closable;
     overlay.hidden = false;
     panel.scrollTop = st;
@@ -1151,7 +1190,7 @@
       <ol class="rules">
         <li><b>出牌就是走棋。</b>每回合抽 3 張牌，每張是一種走法：王走一格、騎走日字、車走直線、象走斜線……走到敵人身上就是攻擊。</li>
         <li><b>擊殺就能再走。</b>這一步殺死敵人，就可以馬上再出一張牌；沒殺到，回合就結束。標著「迅捷」的牌也不會結束回合。規劃一條連鎖，一口氣清掉一排敵人！</li>
-        <li><b>紅格是敵人要打的地方。</b>所有攻擊都會提前一回合標示，回合結束時別站在紅格上。選好牌後把滑鼠移到落點，會預覽這一步的結果。</li>
+        <li><b>紅格是敵人要打的地方。</b>所有攻擊都會提前一回合標示，回合結束時別站在紅格上。${touch ? '選好牌後點一下落點會預覽結果，再點一次才確認。點敵人可以看它的行為，長按牌看說明。' : '選好牌後把滑鼠移到落點，會預覽這一步的結果。'}</li>
         <li><b>借刀殺人。</b>敵人的攻擊也會打到同伴。讓弓手的箭射穿你身後的敵人、把敵人推進紅格；推進深淵（黑洞）的敵人直接墜落。</li>
         <li><b>必須落子。</b>每回合至少要出一張牌，沒出完的牌在回合結束時會被棄掉。</li>
         <li><b>深淵上升。</b>超過標準回合數後，地面會開始出現裂痕，下回合崩塌成深淵。站在上面會受 2 傷害。</li>
@@ -1238,7 +1277,7 @@
 
   function modChip(m) {
     const d = E.MODS[m];
-    return `<span class="mod ${d.bad ? '' : 'good'}" title="${d.name}：${d.desc}">${d.n}<b>${d.name}</b></span>`;
+    return `<span class="mod ${d.bad ? '' : 'good'}" data-mod="${m}" title="${d.name}：${d.desc}">${d.n}<b>${d.name}</b></span>`;
   }
   function showDoors() {
     const next = S.floor + 1;
@@ -1320,9 +1359,13 @@
   function showMenu() {
     if (!S || demo) { showTitle(); return; }
     openOverlay(`<div class="center"><h2>選單</h2><p class="muted">進度會自動保存，下次打開可以繼續。</p>
-      <div class="title-actions"><button type="button" class="btn primary" data-action="ok">繼續遊戲</button><button type="button" class="btn" data-action="title">回到標題</button><button type="button" class="btn ghost" data-action="quit">放棄這一局</button></div></div>`,
+      <div class="title-actions"><button type="button" class="btn primary" data-action="ok">繼續遊戲</button><button type="button" class="btn" data-action="title">回到標題</button><button type="button" class="btn ghost" data-action="quit">放棄這一局</button></div>
+      <div class="title-actions" style="margin-top:10px"><button type="button" class="chip" data-action="speed">動畫：${speed < 1 ? '快速' : '正常'}</button><button type="button" class="chip" data-action="sound">音效：${meta.sound ? '開' : '關'}</button><button type="button" class="chip" data-action="help">規則</button></div></div>`,
     (a) => {
       if (a === 'ok') closeOverlay();
+      if (a === 'speed') { toggleSpeed(); showMenu(); }
+      if (a === 'sound') { toggleSound(); showMenu(); }
+      if (a === 'help') showHelp(showMenu);
       if (a === 'title') { saveRun(); showTitle(); }
       if (a === 'quit') { finalizeRun(); showSummary('放棄了這一局'); }
     }, true);
@@ -1370,13 +1413,15 @@
   $('#btnDeck').addEventListener('click', () => showDeck());
   $('#btnHelp').addEventListener('click', () => showHelp(!S || demo ? showTitle : true));
   $('#btnMenu').addEventListener('click', showMenu);
-  $('#btnSound').addEventListener('click', () => { meta.sound = !meta.sound; saveMeta(); renderHUD(); if (meta.sound) Sfx.select(); });
-  $('#btnSpeed').addEventListener('click', () => {
+  function toggleSound() { meta.sound = !meta.sound; saveMeta(); renderHUD(); if (meta.sound) Sfx.select(); }
+  function toggleSpeed() {
     meta.fast = !meta.fast; saveMeta();
     speed = meta.fast ? 0.55 : 1;
     document.documentElement.style.setProperty('--spd', speed);
     renderHUD();
-  });
+  }
+  $('#btnSound').addEventListener('click', toggleSound);
+  $('#btnSpeed').addEventListener('click', toggleSpeed);
   document.documentElement.style.setProperty('--spd', speed);
   document.addEventListener('keydown', (e) => {
     if (!overlay.hidden) { if (e.key === 'Escape' && overlayClosable) closeOverlay(); return; }
