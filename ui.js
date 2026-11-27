@@ -218,6 +218,7 @@
   }
   function renderPieces(threats, kills) {
     ensurePlayer();
+    playerEl.classList.toggle('guarding', !!S.guard);
     if (playerEl._x !== S.player.x || playerEl._y !== S.player.y) setPos(playerEl, S.player.x, S.player.y);
     const seen = new Set();
     for (const e of S.enemies) {
@@ -289,11 +290,15 @@
     else if (S.phase !== 'player') s = '';
     else if (curPreview) { const r = previewText(curPreview); s = r.s; cls += ' ' + r.cls; }
     else if (selSkill >= 0) s = `技能「${E.SKILLS[S.skills[selSkill].id].name}」：選擇目標。技能不會結束回合。` + (touch ? '點一下預覽，再點一次確認。' : '');
-    else if (sel >= 0) s = `選擇「${E.CARDS[S.cards[S.hand[sel]].k].name}」的落點：綠點是移動，金圈是攻擊。` + (touch ? '點一下預覽，再點一次確認。' : '滑過去可以預覽結果。');
-    else if (S.chain > 0) { s = `連鎖 ×${S.chain}！可以再出一張牌，或結束回合。`; cls += ' warn'; }
-    else if (S.played > 0) s = '迅捷牌不會結束回合，可以繼續出牌或結束回合。';
-    else if (!S.hand.some((_, i) => E.legalTargets(S, i).length)) s = '手上沒有能出的牌，只能結束回合。';
-    else s = '選一張牌出手（每回合至少一張）。擊殺敵人就能再出一張。';
+    else if (sel >= 0) {
+      const c = S.cards[S.hand[sel]];
+      s = E.ctype(c) === 'move' ? `選擇「${E.CARDS[c.k].name}」的落點：綠點是移動，金圈是攻擊。` : `「${E.CARDS[c.k].name}」：選擇出招的方向或目標。`;
+      s += touch ? '點一下預覽，再點一次確認。' : '滑過去可以預覽結果。';
+    }
+    else if (S.bonus > 0) { s = `連鎖 ×${S.chain}！多一次行動：步或技都可以，或結束回合。`; cls += ' warn'; }
+    else if (!S.hand.some((_, i) => E.legalTargets(S, i).length)) s = S.played ? '沒有能出的牌了，結束回合吧。' : '手上沒有能出的牌，只能結束回合。';
+    else if (S.played > 0) s = S.mv > 0 ? '還可以走一步，或出一招（技）。' : S.st > 0 ? '還可以出一招（技），或結束回合。' : '迅捷牌不佔行動，可以繼續出牌或結束回合。';
+    else s = '先走一步（步），再出一招（技）；擊殺換來額外行動。每回合至少出一張。';
     hintEl.className = cls; hintEl.textContent = s;
   }
   function previewText(p) {
@@ -303,7 +308,11 @@
     const kt = kills > 1 ? `擊殺 ${kills} 個！` : kills ? '擊殺！' : '';
     if (p.dead) return { cls: 'bad', s: '這一步會讓你倒下！' };
     if (p.cleared) return { cls: 'good', s: '✦ 這一步就能清空本層！' + (now > 0 ? `（受到 ${now} 傷害）` : '') };
-    if (p.cont) return { cls: now > 0 ? 'warn' : 'good', s: (kt ? kt + '可以再出一張牌' : selSkill >= 0 ? '技能不會結束回合' : '迅捷：出完還能再出一張') + (now > 0 ? ` · 受到 ${now} 傷害` : '') };
+    if (p.cont) {
+      const T = p.T;
+      const next = kt ? kt + '多一次行動' : selSkill >= 0 ? '技能不會結束回合' : T.mv > 0 ? '之後還能再走一步或出招' : T.st > 0 ? '之後還能出一招' : '迅捷：出完還能繼續';
+      return { cls: now > 0 ? 'warn' : 'good', s: next + (now > 0 ? ` · 受到 ${now} 傷害` : '') };
+    }
     return { cls: total > 0 ? 'bad' : 'ok', s: (kt ? kt + ' ' : '') + '回合結束 · ' + (total > 0 ? `你會受到 ${total} 傷害` : (p.blocked ? '聖印會擋下這次傷害' : '這裡安全')) };
   }
 
@@ -324,18 +333,26 @@
       case 'whirl': D8.forEach(([x, y]) => set(x, y, 'a')); break;
       case 'lance': D4.forEach(([x, y]) => { set(x, y, 'a'); set(x * 2, y * 2, 'a'); }); break;
       case 'blink': for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) set(x, y, 'm'); break;
+      case 'slash': D8.forEach(([x, y]) => set(x, y, 'af')); [[-1, -1], [0, -1], [1, -1]].forEach(([x, y]) => set(x, y, 'a')); break;
+      case 'bolt': (plus ? D8 : D4).forEach(([x, y]) => { set(x, y, 'af'); set(x * 2, y * 2, 'a'); }); break;
+      case 'hook': D4.forEach(([x, y]) => { set(x, y, 'p'); set(x * 2, y * 2, 's'); }); break;
+      case 'execute': D8.forEach(([x, y]) => set(x, y, 'a')); break;
+      case 'guard': D8.forEach(([x, y]) => set(x, y, 'g')); break;
     }
     set(0, 0, 'c');
     let h = '<span class="pat">';
     for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) h += `<i class="${m.get(x + ',' + y) || ''}"></i>`;
     return h + '</span>';
   }
+  // 迅捷要看遺物（鐵壁），局外（命盤、工坊）只看牌本身
+  const quickOf = (c) => E.isQuick(c, S && !demo ? S : null);
   function cardHTML(c, i) {
     const d = E.CARDS[c.k];
-    return `${i != null ? `<span class="key">${i + 1}</span>` : ''}<span class="glyph">${d.n}</span><span class="cname">${d.name}${c.plus ? '<sup>+</sup>' : ''}</span>${patternHTML(c.k, c.plus)}${E.isQuick(c) ? '<span class="tag">迅捷</span>' : ''}${c.plus ? '<span class="seal">升</span>' : ''}`;
+    return `${i != null ? `<span class="key">${i + 1}</span>` : ''}<span class="ty">${E.TYPE_NAME[d.t]}</span><span class="glyph">${d.n}</span><span class="cname">${d.name}${c.plus ? '<sup>+</sup>' : ''}</span>${patternHTML(c.k, c.plus)}${quickOf(c) ? '<span class="tag">迅捷</span>' : ''}${c.plus ? '<span class="seal">升</span>' : ''}`;
   }
   function cardEl(c, i, tag) {
-    const n = mk(tag || 'div', 'card r' + E.CARDS[c.k].r + (c.plus ? ' plus' : '') + (E.isQuick(c) ? ' quick' : ''), cardHTML(c, i));
+    const d = E.CARDS[c.k];
+    const n = mk(tag || 'div', 'card r' + d.r + ' t-' + d.t + (c.plus ? ' plus' : '') + (quickOf(c) ? ' quick' : ''), cardHTML(c, i));
     return n;
   }
   function renderHand() {
@@ -360,7 +377,12 @@
   function renderPile() {
     const p = $('#pile');
     if (!S || demo) { p.innerHTML = ''; return; }
-    let h = `<span>牌庫 <b>${S.draw.length}</b></span><span>棄牌 <b>${S.discard.length}</b></span>`;
+    let h = '';
+    if (S.phase === 'player') {
+      const pip = (on, label, cls) => `<i class="${cls} ${on ? 'on' : ''}">${label}</i>`;
+      h += `<span class="acts" title="每回合先走一步（步），再出一招（技）；出招後就不能再走。擊殺換來一次額外行動。">${pip(S.mv > 0, '步', 'mv')}${pip(S.st > 0, '技', 'st')}${S.bonus > 0 ? `<i class="bonus on">+${S.bonus}</i>` : ''}</span>`;
+    }
+    h += `<span>牌庫 <b>${S.draw.length}</b></span><span>棄牌 <b>${S.discard.length}</b></span>`;
     if (E.has(S, 'lantern')) {
       const next = S.draw.slice(-3).reverse().map((id) => E.CARDS[S.cards[id].k].n).join(' ');
       h += `<span title="先知之燈：接下來會抽到的牌">接下來 <span class="next">${next || '洗牌'}</span></span>`;
@@ -422,7 +444,7 @@
     $('#floor').textContent = (!isTower() && S.floor > 10 ? '無盡 ' : '') + S.floor + (S.boss ? ' 首領' : '');
     $('#shardStat').hidden = !isTower() && !S.shards;
     $('#shards').textContent = S.shards || 0;
-    $('#mods').innerHTML = (S.mods || []).map(modChip).join('');
+    $('#mods').innerHTML = (S.mods || []).map(modChip).join('') + (S.task && S.phase !== 'door' ? taskChip() : '');
     $('#turn').textContent = S.turn;
     const collapsing = S.turn >= E.collapseTurn(S);
     $('#par').textContent = collapsing ? '崩塌中' : '/ ' + E.collapseTurn(S);
@@ -434,7 +456,7 @@
     const canEnd = !demo && !busy && E.canWait(S);
     const btn = $('#btnEnd');
     btn.disabled = !canEnd;
-    btn.classList.toggle('pulse', canEnd && (S.chain > 0 || !S.hand.some((_, i) => E.legalTargets(S, i).length)));
+    btn.classList.toggle('pulse', canEnd && (S.bonus > 0 || !S.hand.some((_, i) => E.legalTargets(S, i).length)));
     $('#btnUndo').disabled = demo || busy || !hist.length || S.phase === 'reward';
     $('#btnSound').textContent = meta.sound ? '音效 開' : '音效 關';
     $('#btnSpeed').textContent = speed < 1 ? '快速' : '正常';
@@ -445,8 +467,13 @@
     const d = E.MODS[m];
     infoEl.innerHTML = `<div class="info-head">${modChip(m)}<div><b>${d.name}</b><small>${d.bad ? '樓層干擾' : '樓層祝福'}</small></div></div><p>${d.desc}</p>`;
   }
-  $('#mods').addEventListener('mouseover', (e) => { const b = e.target.closest('[data-mod]'); if (b) showModInfo(b.dataset.mod); });
-  $('#mods').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) { showModInfo(b.dataset.mod); peek(true); } });
+  function showTaskInfo() {
+    if (!S || !S.task) return;
+    const d = E.TASKS[S.task];
+    infoEl.innerHTML = `<div class="info-head">${taskChip()}<div><b>懸賞：${d.name}</b><small>可選的挑戰</small></div></div><p>${d.desc}</p><p class="muted">達成後這層的魂晶 ×1.5，獎勵多一個選項。</p>`;
+  }
+  $('#mods').addEventListener('mouseover', (e) => { const b = e.target.closest('[data-mod]'); if (b) showModInfo(b.dataset.mod); else if (e.target.closest('[data-task]')) showTaskInfo(); });
+  $('#mods').addEventListener('click', (e) => { const b = e.target.closest('[data-mod]'); if (b) { showModInfo(b.dataset.mod); peek(true); } else if (e.target.closest('[data-task]')) { showTaskInfo(); peek(true); } });
 
   function fullRender() {
     if (!S) return;
@@ -521,9 +548,10 @@
     infoEl.innerHTML = h;
     return worth;
   }
+  const TYPE_DESC = { move: '步：移動牌，走到敵人身上就是攻擊（近身）。每回合一次，要在出招之前。', strike: '技：原地出招，不會移動你。每回合一次；出招之後就不能再走了。' };
   function showCardInfo(c) {
     const d = E.CARDS[c.k];
-    infoEl.innerHTML = `<div class="info-head"><span class="info-ico card-ico">${d.n}</span><div><b>${d.name}${c.plus ? '+' : ''}</b><small>${['普通', '稀有', '傳說'][d.r]}${E.isQuick(c) ? ' · 迅捷' : ''}</small></div></div><p>${d.desc}</p><p class="${c.plus ? 'intent' : 'muted'}">${c.plus ? '已升級：' : '升級後：'}${d.plus}</p>${E.isQuick(c) ? '<p class="muted">迅捷：打出後不會結束回合。</p>' : ''}`;
+    infoEl.innerHTML = `<div class="info-head"><span class="info-ico card-ico">${d.n}</span><div><b>${d.name}${c.plus ? '+' : ''}</b><small>${E.TYPE_NAME[d.t]} · ${['普通', '稀有', '傳說'][d.r]}${quickOf(c) ? ' · 迅捷' : ''}</small></div></div><p>${d.desc}</p><p class="${c.plus ? 'intent' : 'muted'}">${c.plus ? '已升級：' : '升級後：'}${d.plus}</p><p class="muted">${TYPE_DESC[d.t]}${quickOf(c) ? '迅捷：不佔用這回合的步或技。' : ''}</p>`;
   }
   function showRelicInfo(r) {
     const d = E.RELICS[r];
@@ -576,8 +604,9 @@
       setTimeout(() => n.remove(), 700);
     }
   }
-  function projectile(fromX, fromY, toX, toY, beam) {
-    const n = mk('div', 'shot' + (beam ? ' beam' : ''));
+  const noiseHit = () => Sfx.enemyAtk('melee');
+  function projectile(fromX, fromY, toX, toY, beam, kind) {
+    const n = mk('div', 'shot' + (beam ? ' beam' : '') + (kind ? ' ' + kind : ''));
     fxEl.appendChild(n);
     const dist = Math.max(Math.abs(toX - fromX), Math.abs(toY - fromY));
     const dur = (80 + dist * 35) * speed;
@@ -625,6 +654,7 @@
       switch (e.t) {
         case 'phase':
           phase = e.p;
+          if (e.p === 'player' && playerEl) playerEl.classList.remove('guarding');
           if (e.p === 'enemy') {
             comboKills = 0;
             renderMarks(animBase || S, { threats: null });
@@ -739,7 +769,25 @@
           dispHp = Math.min(S.maxHp, dispHp + e.n); renderHearts(dispHp);
           floatText(e.x, e.y, '+' + e.n, 'heal'); Sfx.heal(); await sleep(160);
           break;
-        case 'block': floatText(e.x, e.y, '聖印格擋', 'gold'); Sfx.block(); await sleep(200); break;
+        case 'block': floatText(e.x, e.y, e.src === 'guard' ? '架式格擋' : '聖印格擋', 'gold'); Sfx.block(); await sleep(200); break;
+        case 'guard': {
+          ensurePlayer(); playerEl.classList.add('guarding');
+          floatText(e.x, e.y, '架式', 'gold'); Sfx.block(); await sleep(140);
+          break;
+        }
+        case 'slash': {
+          ensurePlayer(); bumpEl(playerEl, Math.sign(e.dx), Math.sign(e.dy), 22);
+          for (const [x, y] of e.tiles) tileFx(x, y, 'flash-g', 300);
+          noiseHit(); await sleep(110);
+          break;
+        }
+        case 'bolt': {
+          const dur = projectile(e.x1, e.y1, e.x2, e.y2, false, e.hook ? 'hook' : 'bolt');
+          Sfx.enemyAtk('shoot');
+          await new Promise((r) => setTimeout(r, dur));
+          tileFx(e.x2, e.y2, 'flash-g', 300);
+          break;
+        }
         case 'text': floatText(e.x, e.y, e.s, (e.c || 'info') + (e.big ? ' big' : '')); await sleep(e.big ? 260 : 70); break;
         case 'chain': if (e.n >= 2) { comboFx(e.n); } await sleep(60); break;
         case 'ring': ringFx(e.x, e.y); await sleep(80); break;
@@ -761,7 +809,7 @@
           await sleep(320);
           break;
         }
-        case 'clear': Sfx.clear(); banner('清除', `第 ${e.floor} 層`, e.shards ? `魂晶 +${e.shards}` : '深淵暫時安靜了'); await sleep(900); break;
+        case 'clear': Sfx.clear(); banner(e.task ? '清除 · 懸賞達成' : '清除', `第 ${e.floor} 層`, e.shards ? `魂晶 +${e.shards}` : '深淵暫時安靜了'); await sleep(900); break;
         case 'log': addLog(e.s); break;
         case 'shield': {
           const n = pieceEls.get(e.uid);
@@ -791,7 +839,12 @@
     selSkill = -1;
     if (sel === i) sel = -1;
     else if (E.legalTargets(S, i).length) { sel = i; Sfx.select(); }
-    else { toast('這張牌現在沒有可以走的位置'); return; }
+    else {
+      const c = S.cards[S.hand[i]];
+      if (!E.slotOK(S, c)) toast(E.ctype(c) === 'move' ? (S.st > 0 ? '出招之後就不能再走了（擊殺可以換來額外行動）' : '這回合已經走過一步了') : '這回合已經出過招了');
+      else toast(E.ctype(c) === 'move' ? '這張牌現在沒有可以走的位置' : '這張牌現在沒有可以打的目標');
+      return;
+    }
     pendingTap = null; focusUid = null;
     if (sel >= 0) showCardInfo(S.cards[S.hand[sel]]);
     refresh(); renderHand();
@@ -1017,7 +1070,7 @@
     openOverlay(`<div class="title">
       <div class="logo">棋淵</div>
       <div class="logo-sub">ABYSS GAMBIT</div>
-      <p class="tagline">手上的每張牌都是一種棋步。擊殺換來下一步，借刀殺人換來生路。</p>
+      <p class="tagline">先走一步，再出一招。擊殺換來下一步，借刀殺人換來生路。</p>
       ${sv ? `<div class="title-actions" style="margin-bottom:16px"><button type="button" class="btn primary big" data-action="resume">${svLabel}</button></div>` : ''}
       <div class="modes">
         <button type="button" class="mode story" data-action="story"><span class="m-eye">STORY</span><span class="m-name">故事模式</span>
@@ -1042,7 +1095,7 @@
       const locked = !meta.unlocked.includes(id);
       return `<button type="button" class="hero ${locked ? 'locked' : ''} ${meta.hero === id ? 'sel' : ''}" data-action="hero" data-id="${id}" ${locked ? 'aria-disabled="true"' : ''}>
         <span class="hero-name">${h.name}</span><span class="hero-hp">♥ ${h.hp}</span>
-        <span class="hero-deck">${h.deck.map((k) => E.CARDS[k].n).join('')}</span>
+        <span class="hero-deck">${h.deck.map((k) => E.CARDS[k].t === 'strike' ? `<em>${E.CARDS[k].n}</em>` : E.CARDS[k].n).join('')}</span>
         ${h.relics.map((r) => `<span class="hero-relic"><i>${E.RELICS[r].icon}</i>${E.RELICS[r].name}</span>`).join('')}
         <span class="hero-desc">${locked ? '未解鎖 · ' + h.unlock : h.desc}</span></button>`;
     }).join('');
@@ -1066,7 +1119,7 @@
   }
 
   /* ---------- 命盤（自訂角色） ---------- */
-  const defaultBuild = () => ({ hp: 5, hand: 0, undo: 0, deck: [['king', false], ['king', false], ['knight', false], ['rook', false], ['bishop', false]], relics: [], skills: ['redraw'], start: 1 });
+  const defaultBuild = () => ({ hp: 5, hand: 0, undo: 0, deck: [['king', false], ['king', false], ['knight', false], ['rook', false], ['slash', false], ['lance', false]], relics: [], skills: ['redraw'], start: 1 });
   let bd = null;
   function sanitizeBuild(b0) {
     const b = Object.assign(defaultBuild(), JSON.parse(JSON.stringify(b0 || {})));
@@ -1090,7 +1143,7 @@
     const stats = [
       stepper('hp', '生命上限', `每 +1 花 ${T.hpCost} 點（基礎 ${T.baseHp}）`, bd.hp, bd.hp > T.baseHp, bd.hp < T.maxHp),
       stepper('undo', '每層回溯', `每 +1 花 ${T.undoCost} 點`, 1 + bd.undo, bd.undo > 0, bd.undo < T.maxUndo),
-      stepper('hand', '手牌上限', unl('hand') ? `+1 花 ${T.handCost} 點` : '工坊解鎖「多謀」後可調整', 3 + bd.hand, bd.hand > 0, unl('hand') && !bd.hand, !unl('hand')),
+      stepper('hand', '手牌上限', unl('hand') ? `+1 花 ${T.handCost} 點` : '工坊解鎖「多謀」後可調整', E.BASE_HAND + bd.hand, bd.hand > 0, unl('hand') && !bd.hand, !unl('hand')),
     ].join('');
     const skills = Object.entries(E.SKILLS).map(([id, d]) => {
       const open = skillOpen(id), on = bd.skills.includes(id);
@@ -1102,20 +1155,24 @@
       return `<button type="button" class="pick ${on ? 'on' : ''}" data-action="relic" data-id="${r}"><span class="pk-ico">${d.icon}</span><span class="pk-t"><b>${d.name}<span class="cost">${T.relicCost} 點</span></b><small>${d.desc}</small></span></button>`;
     }).join('');
     const lockedRelics = Object.keys(E.RELICS).length - openRelics.length;
-    const deck = bd.deck.map(([k, plus], i) => `<div class="dcard"><button type="button" class="card r${E.CARDS[k].r}${plus ? ' plus' : ''}" data-action="rm" data-i="${i}" title="點一下移除">${cardHTML({ k, plus })}</button><button type="button" class="x" data-action="rm" data-i="${i}" aria-label="移除">×</button>${unl('plus') ? `<button type="button" class="pl ${plus ? 'on' : ''}" data-action="plus" data-i="${i}">${plus ? '已升級' : '升級 +1'}</button>` : ''}</div>`).join('');
-    const palette = Object.keys(E.CARDS).map((k) => {
+    const deck = bd.deck.map(([k, plus], i) => `<div class="dcard"><button type="button" class="card r${E.CARDS[k].r} t-${E.CARDS[k].t}${plus ? ' plus' : ''}" data-action="rm" data-i="${i}" title="點一下移除">${cardHTML({ k, plus })}</button><button type="button" class="x" data-action="rm" data-i="${i}" aria-label="移除">×</button>${unl('plus') ? `<button type="button" class="pl ${plus ? 'on' : ''}" data-action="plus" data-i="${i}">${plus ? '已升級' : '升級 +1'}</button>` : ''}</div>`).join('');
+    const palette = (t) => Object.keys(E.CARDS).filter((k) => E.CARDS[k].t === t).map((k) => {
       const d = E.CARDS[k], open = cardOpen(k);
-      return `<button type="button" class="pick cd ${open ? '' : 'locked'}" data-action="add" data-k="${k}"><span class="pk-ico">${d.n}</span><span class="pk-t"><b>${d.name}<span class="cost">${T.cardCost[d.r]} 點</span></b><small>${open ? d.desc : '工坊解鎖'}</small></span></button>`;
+      return `<button type="button" class="pick cd ${open ? '' : 'locked'}" data-action="add" data-k="${k}"><span class="pk-ico ty-${d.t}">${d.n}</span><span class="pk-t"><b>${d.name}<span class="cost">${T.cardCost[d.r]} 點</span></b><small>${open ? d.desc : '工坊解鎖'}</small></span></button>`;
     }).join('');
+    const nMove = bd.deck.filter(([k]) => E.CARDS[k].t === 'move').length, nStrike = bd.deck.length - nMove;
     const starts = T.starts.filter((f) => f === 1 || unl('start:' + f)).map((f) => `<button type="button" class="pick ${bd.start === f ? 'on' : ''}" data-action="start" data-f="${f}"><span class="pk-ico c-gold">${f}</span><span class="pk-t"><b>第 ${f} 層</b><small>${f === 1 ? '從頭開始' : `先挑 ${E.draftPicks(f)} 次補給`}</small></span></button>`).join('');
     const hist = meta.towerHist.length ? `<div class="history">${meta.towerHist.map((h) => `<span><b>第 ${h.floor} 層</b> · +${h.shards} 魂晶 · ${h.deck}${h.skills ? ' · 技 ' + h.skills : ''} · ${h.date.slice(5)}</span>`).join('')}</div>` : '<p class="muted" style="margin:0">還沒有攀登紀錄。</p>';
     const html = `<div class="builder">
       <div class="toprow"><button type="button" class="btn ghost" data-action="back">← 返回</button><h2>命盤</h2><span class="grow"></span><span class="shard-pill">魂晶 ${meta.shards}</span><button type="button" class="btn" data-action="shop">魂晶工坊</button></div>
-      <p class="muted" style="margin:0">點數有限，取捨就是樂趣。塔越高，敵人會長出越多詞條，樓層也會出現干擾；每一層開始前可以選門，越險的門魂晶越多。帶回的魂晶可以在工坊解鎖新的牌、技能、遺物與更多點數。最高紀錄：<b>第 ${meta.towerBest} 層</b>。</p>
+      <p class="muted" style="margin:0">點數有限，取捨就是樂趣。塔越高，敵人會長出越多詞條（荊棘懲罰近身、結界擋下遠攻），樓層也會出現干擾；每一層開始前可以選門，越險的門魂晶越多，懸賞則看你的流派。帶回的魂晶可以在工坊解鎖新的牌、技能、遺物與更多點數。最高紀錄：<b>第 ${meta.towerBest} 層</b>。</p>
       <div class="bsec"><h3>能力值</h3><div class="stats-row">${stats}</div></div>
       <div class="bsec"><h3>技能 <small>${bd.skills.length} / ${slots} 欄 · 不會結束回合，用完需要冷卻</small></h3><div class="chips">${skills}</div></div>
-      <div class="bsec"><h3>起始遺物 <small>每件 ${T.relicCost} 點${lockedRelics ? ` · 工坊還有 ${lockedRelics} 件可解鎖` : ''}</small></h3><div class="chips">${relics}</div></div>
-      <div class="bsec"><h3>起始牌組 <small>${bd.deck.length} 張（${T.deckMin}–${T.deckMax}）· 普通 1 點、稀有 2 點、傳說 3 點</small></h3><div class="deck-edit">${deck || '<p class="muted">牌組是空的。</p>'}</div><div class="chips">${palette}</div></div>
+      <div class="bsec"><h3>起始遺物 <small>${bd.relics.length} / ${E.RELIC_CAP} 件 · 每件 ${T.relicCost} 點${lockedRelics ? ` · 工坊還有 ${lockedRelics} 件可解鎖` : ''}</small></h3><div class="chips">${relics}</div></div>
+      <div class="bsec"><h3>起始牌組 <small>${bd.deck.length} 張（${T.deckMin}–${T.deckMax}）· 步 ${nMove}、技 ${nStrike} · 普通 1 點、稀有 2 點、傳說 3 點</small></h3><div class="deck-edit">${deck || '<p class="muted">牌組是空的。</p>'}</div>
+        ${!nMove || !nStrike ? `<p class="warn" style="margin:8px 0 0">${!nMove ? '牌組裡沒有「步」：你將無法移動。' : '牌組裡沒有「技」：只能靠走到敵人身上攻擊。'}</p>` : ''}
+        <h4 class="pal-h">步 <small>移動，走到敵人身上就是攻擊</small></h4><div class="chips">${palette('move')}</div>
+        <h4 class="pal-h">技 <small>原地出招；出招後這回合就不能再走</small></h4><div class="chips">${palette('strike')}</div></div>
       <div class="bsec"><h3>起點</h3><div class="chips">${starts}</div>${T.starts.length > 1 && !unl('start:6') ? '<p class="muted" style="margin:8px 0 0">抵達第 6 層後，可以在工坊解鎖「從第 6 層出發」。</p>' : ''}</div>
       <div class="bsec"><h3>最近的攀登</h3>${hist}</div>
       <div class="budget"><div class="meter ${cost > budget ? 'over' : ''}"><div class="mt">構築點數 <span>${cost} / ${budget}</span></div><div class="bar"><i style="width:${Math.min(100, (cost / budget) * 100)}%"></i></div></div>
@@ -1148,6 +1205,7 @@
         else { bd.skills.push(d.id); if (bd.skills.length > slots) bd.skills.shift(); }
         break;
       case 'relic':
+        if (!bd.relics.includes(d.id) && bd.relics.length >= E.RELIC_CAP) { toast(`遺物最多帶 ${E.RELIC_CAP} 件`); return; }
         bd.relics = bd.relics.includes(d.id) ? bd.relics.filter((x) => x !== d.id) : bd.relics.concat(d.id);
         break;
       case 'add':
@@ -1190,8 +1248,9 @@
   function showHelp(back) {
     openOverlay(`<div class="eyebrow">How to play</div><h2>怎麼玩</h2>
       <ol class="rules">
-        <li><b>出牌就是走棋。</b>每回合抽 3 張牌，每張是一種走法：王走一格、騎走日字、車走直線、象走斜線……走到敵人身上就是攻擊。</li>
-        <li><b>擊殺就能再走。</b>這一步殺死敵人，就可以馬上再出一張牌；沒殺到，回合就結束。標著「迅捷」的牌也不會結束回合。規劃一條連鎖，一口氣清掉一排敵人！</li>
+        <li><b>先走一步，再出一招。</b>每回合抽 ${E.BASE_HAND} 張牌。牌分兩種：<b>步</b>是棋步（王走一格、騎走日字、車走直線……），走到敵人身上就是攻擊；<b>技</b>是原地出招（橫斬、長槍、弩箭、架式……）。每回合可以出一張步、一張技，但<b>出招之後就不能再走</b>。</li>
+        <li><b>擊殺換來額外行動。</b>只要殺死敵人，就多一次行動，步或技都可以；連鎖下去，一口氣清掉一排敵人！標著「迅捷」的牌不佔用行動。</li>
+        <li><b>近身與遠攻。</b>走到敵人身上、橫斬、迴旋、斷首、落地衝擊都算近身攻擊：刺蝟和「荊棘」敵人會刺傷你。「結界」敵人則只吃近身攻擊。牌組裡兩種都要有。</li>
         <li><b>紅格是敵人要打的地方。</b>所有攻擊都會提前一回合標示，回合結束時別站在紅格上。${touch ? '選好牌後點一下落點會預覽結果，再點一次才確認。點敵人可以看它的行為，長按牌看說明。' : '選好牌後把滑鼠移到落點，會預覽這一步的結果。'}</li>
         <li><b>借刀殺人。</b>敵人的攻擊也會打到同伴。讓弓手的箭射穿你身後的敵人、把敵人推進紅格；推進深淵（黑洞）的敵人直接墜落。</li>
         <li><b>必須落子。</b>每回合至少要出一張牌，沒出完的牌在回合結束時會被棄掉。</li>
@@ -1199,8 +1258,8 @@
         <li><b>增援。</b>虛線圈是下回合要出現的敵人；站上去能擋下它，但要受 1 傷害。</li>
         <li><b>回溯。</b>同一回合內可以任意收回；退回上一回合每層有次數限制。</li>
       </ol>
-      <p class="muted"><b>無盡之塔：</b>自己配點打造角色（能力值、技能、遺物、牌組）。技能不會結束回合，用完要冷卻。越往上，敵人會帶著詞條（護盾、分裂、幽影……），樓層也有干擾。每層之前選門：越險的門魂晶越多。魂晶拿去工坊解鎖更多選擇。</p>
-      <p class="keys"><kbd>1</kbd>–<kbd>4</kbd> 選牌　<kbd>Q</kbd> <kbd>W</kbd> 技能　<kbd>空白</kbd> 結束回合　<kbd>Z</kbd> 回溯　<kbd>Esc</kbd> 取消</p>
+      <p class="muted"><b>無盡之塔：</b>自己配點打造角色（能力值、技能、遺物、牌組）。技能不會結束回合，用完要冷卻。越往上，敵人會帶著詞條（護盾、分裂、結界……），樓層也有干擾。每層之前選門：越險的門魂晶越多；每道門還附一個<b>懸賞</b>（連斬、借刀、推落……），達成就多拿魂晶與獎勵。魂晶拿去工坊解鎖更多選擇。</p>
+      <p class="keys"><kbd>1</kbd>–<kbd>5</kbd> 選牌　<kbd>Q</kbd> <kbd>W</kbd> 技能　<kbd>空白</kbd> 結束回合　<kbd>Z</kbd> 回溯　<kbd>Esc</kbd> 取消</p>
       <div class="title-actions"><button type="button" class="btn primary" data-action="ok">${back ? '知道了' : '開始'}</button></div>`,
     (a) => { if (a === 'ok') { if (typeof back === 'function') back(); else closeOverlay(); } }, typeof back !== 'function');
   }
@@ -1210,13 +1269,13 @@
     switch (o.t) {
       case 'card': {
         const d = E.CARDS[o.k];
-        return wrap(cardEl({ k: o.k, plus: o.plus }).outerHTML, `新牌：${d.name}${o.plus ? '+' : ''}`, d.desc + (o.plus ? '　升級：' + d.plus : ''));
+        return wrap(cardEl({ k: o.k, plus: o.plus }).outerHTML, `新的${E.TYPE_NAME[d.t]}：${d.name}${o.plus ? '+' : ''}`, d.desc + (o.plus ? '　升級：' + d.plus : ''));
       }
       case 'upgrade': return wrap('<div class="ropt-ico seal">升</div>', '升級一張牌', '從牌組中選一張牌永久強化。');
       case 'remove': return wrap('<div class="ropt-ico">削</div>', '精簡牌組', '移除一張牌，讓好牌更常出現。');
-      case 'relic': { const r = E.RELICS[o.r]; return wrap(`<div class="ropt-ico relic-seal">${r.icon}</div>`, '遺物：' + r.name, r.desc); }
+      case 'relic': { const r = E.RELICS[o.r]; return wrap(`<div class="ropt-ico relic-seal">${r.icon}</div>`, '遺物：' + r.name, r.desc + (S.relics.length >= E.RELIC_CAP ? `（欄位已滿 ${E.RELIC_CAP}/${E.RELIC_CAP}，要換掉一件）` : '')); }
       case 'heal': return wrap('<div class="ropt-ico hp">♥</div>', '休息', `回復 ${o.n} 生命。`);
-      case 'maxhp': return wrap('<div class="ropt-ico hp">✚</div>', '強健', `生命上限 +${o.n}，並回復 ${o.n}。`);
+      case 'maxhp': return wrap('<div class="ropt-ico hp">✚</div>', '強健', `生命上限 +${o.n}，並回復 ${o.n}（上限 ${E.HP_CAP}）。`);
     }
     return '';
   }
@@ -1225,6 +1284,7 @@
     const bonus = [];
     if (!draft) {
       if (S.lastShards) bonus.push(`魂晶 +${S.lastShards}`);
+      if (S.taskDone) bonus.push(`懸賞「${E.TASKS[S.task].name}」達成：魂晶 ×1.5、多一個獎勵選項`);
       if (S.lastPar) bonus.push('在標準回合內清場：多一個獎勵選項');
       if (S.lastFlawless) bonus.push('無傷通過 +50 分');
     }
@@ -1242,6 +1302,7 @@
       if (a === 'pick') {
         const i = +d.i, o = S.rewards[i];
         if (o.t === 'upgrade' || o.t === 'remove') showDeckPick(i, o.t);
+        else if (o.t === 'relic' && S.relics.length >= E.RELIC_CAP) showRelicSwap(i);
         else takeReward(i);
       }
     });
@@ -1250,7 +1311,7 @@
     const ids = S.deck.filter((id) => mode === 'remove' || !S.cards[id].plus);
     const items = ids.map((id) => {
       const c = S.cards[id], d = E.CARDS[c.k];
-      return `<div class="deck-pick"><button type="button" class="card r${d.r}${c.plus ? ' plus' : ''}" data-action="card" data-id="${id}">${cardHTML(c)}</button><span>${mode === 'upgrade' ? d.plus : d.desc}</span></div>`;
+      return `<div class="deck-pick"><button type="button" class="card r${d.r} t-${d.t}${c.plus ? ' plus' : ''}" data-action="card" data-id="${id}">${cardHTML(c)}</button><span>${mode === 'upgrade' ? d.plus : d.desc}</span></div>`;
     }).join('');
     openOverlay(`<div class="center"><div class="eyebrow">${mode === 'upgrade' ? '升級' : '精簡'}</div>
       <h2>${mode === 'upgrade' ? '選一張牌升級' : '選一張牌移除'}</h2>
@@ -1259,6 +1320,20 @@
     (a, d) => {
       if (a === 'back') showReward();
       if (a === 'card') takeReward(i, +d.id);
+    });
+  }
+  // 遺物欄位滿了：選一件換掉
+  function showRelicSwap(i) {
+    const nr = E.RELICS[S.rewards[i].r];
+    const items = S.relics.map((r) => `<button type="button" class="relic-row pickable" data-action="drop" data-r="${r}"><span class="ri">${E.RELICS[r].icon}</span><div><b>${E.RELICS[r].name}</b><small>${E.RELICS[r].desc}</small></div></button>`).join('');
+    openOverlay(`<div class="center"><div class="eyebrow">遺物欄位已滿 · ${S.relics.length} / ${E.RELIC_CAP}</div>
+      <h2>拿「${nr.name}」要換掉哪一件？</h2>
+      <p class="muted">${nr.icon} ${nr.name}：${nr.desc}</p>
+      <div class="relic-list">${items}</div>
+      <button type="button" class="btn ghost" data-action="back">返回</button></div>`,
+    (a, d) => {
+      if (a === 'back') showReward();
+      if (a === 'drop') takeReward(i, d.r);
     });
   }
   function enterFloorUI() {
@@ -1277,6 +1352,12 @@
     enterFloorUI();
   }
 
+  function taskChip() {
+    const d = E.TASKS[S.task], n = Math.min(d.goal, E.taskProgress(S));
+    const done = S.task === 'flawless' ? (S.floorDmg === 0 ? 'ok' : 'fail') : n >= d.goal ? 'ok' : '';
+    const prog = S.task === 'flawless' ? (done === 'ok' ? '保持中' : '失敗') : `${n}/${d.goal}`;
+    return `<span class="mod task ${done}" data-task="1" title="懸賞「${d.name}」：${d.desc}達成後魂晶 ×1.5、獎勵多一個選項。">${d.n}<b>${d.name} ${prog}</b></span>`;
+  }
   function modChip(m) {
     const d = E.MODS[m];
     return `<span class="mod ${d.bad ? '' : 'good'}" data-mod="${m}" title="${d.name}：${d.desc}">${d.n}<b>${d.name}</b></span>`;
@@ -1289,11 +1370,12 @@
       if (d.extra) perks.push(`獎勵 +${d.extra} 選項`);
       if (d.relic) perks.push('保證出現遺物');
       const mods = d.mods.length ? d.mods.map((m) => `<div class="d-mod">${modChip(m)}<span>${E.MODS[m].desc}</span></div>`).join('') : '<div class="d-none">沒有特殊狀況</div>';
-      return `<button type="button" class="door ${d.boss ? 'boss' : 't' + d.tier}" data-action="door" data-i="${i}"><span class="d-name">${d.boss ? '首領之門' : names[d.tier]}</span><span class="d-bounty">魂晶 ×${d.bounty}</span>${perks.length ? `<span class="d-perks">${perks.join(' · ')}</span>` : ''}<div class="d-mods">${mods}</div></button>`;
+      const task = d.task ? `<div class="d-task"><span class="mod task">${E.TASKS[d.task].n}<b>懸賞 · ${E.TASKS[d.task].name}</b></span><span>${E.TASKS[d.task].desc}</span></div>` : '';
+      return `<button type="button" class="door ${d.boss ? 'boss' : 't' + d.tier}" data-action="door" data-i="${i}"><span class="d-name">${d.boss ? '首領之門' : names[d.tier]}</span><span class="d-bounty">魂晶 ×${d.bounty}</span>${perks.length ? `<span class="d-perks">${perks.join(' · ')}</span>` : ''}<div class="d-mods">${mods}</div>${task}</button>`;
     }).join('');
     openOverlay(`<div class="center"><div class="eyebrow">無盡之塔 · 第 ${next} 層</div>
       <h2>${S.doors[0].boss ? '首領就在門後' : '選擇下一道門'}</h2>
-      <p class="muted">越危險的門，帶回的魂晶越多、獎勵越好。生命 ${S.hp} / ${S.maxHp}，這一局已賺到 ${S.shards} 魂晶。</p>
+      <p class="muted">越危險的門，帶回的魂晶越多、獎勵越好；懸賞是可選的挑戰，達成後魂晶 ×1.5、獎勵多一個選項。生命 ${S.hp} / ${S.maxHp}，這一局已賺到 ${S.shards} 魂晶。</p>
       <div class="doors">${doors}</div></div>`, (a, d) => {
       if (a !== 'door') return;
       const ev = E.chooseDoor(S, +d.i);
@@ -1349,11 +1431,14 @@
   }
   function showDeck() {
     if (!S || demo) return;
-    const cards = S.deck.slice().sort((a, b) => S.cards[a].k.localeCompare(S.cards[b].k)).map((id) => cardEl(S.cards[id]).outerHTML).join('');
+    const order = Object.keys(E.CARDS);
+    const cards = S.deck.slice().sort((a, b) => order.indexOf(S.cards[a].k) - order.indexOf(S.cards[b].k)).map((id) => cardEl(S.cards[id]).outerHTML).join('');
+    const nMove = S.deck.filter((id) => E.ctype(S.cards[id]) === 'move').length;
     const relics = S.relics.length ? S.relics.map((r) => `<div class="relic-row"><span class="ri">${E.RELICS[r].icon}</span><div><b>${E.RELICS[r].name}</b><small>${E.RELICS[r].desc}</small></div></div>`).join('') : '<p class="muted">還沒有遺物。</p>';
     const skills = (S.skills || []).map((k) => `<div class="relic-row"><span class="ri" style="background:#3a2d6e">${E.SKILLS[k.id].n}</span><div><b>${E.SKILLS[k.id].name}</b><small>冷卻 ${E.SKILLS[k.id].cd} · ${E.SKILLS[k.id].desc}</small></div></div>`).join('');
-    openOverlay(`<div class="eyebrow">${heroName()} · 牌組 ${S.deck.length} 張</div><h2>牌組與遺物</h2>
+    openOverlay(`<div class="eyebrow">${heroName()} · 牌組 ${S.deck.length} 張（步 ${nMove}、技 ${S.deck.length - nMove}）</div><h2>牌組與遺物</h2>
       <div class="deck-grid">${cards}</div>
+      <p class="muted" style="margin:12px 0 4px">遺物 ${S.relics.length} / ${E.RELIC_CAP} · 生命上限 ${S.maxHp} / ${E.HP_CAP} · 牌組至少 ${E.minDeck(S)} 張</p>
       <div class="relic-list">${skills}${relics}</div>
       <div class="title-actions" style="margin-top:16px"><button type="button" class="btn primary" data-action="ok">返回</button></div>`,
     (a) => { if (a === 'ok') closeOverlay(); }, true);
@@ -1379,6 +1464,10 @@
     X.skills = X.skills || []; X.mods = X.mods || []; X.fire = X.fire || [];
     X.shards = X.shards || 0; X.lastShards = X.lastShards || 0; X.undoBase = X.undoBase || 1;
     for (const e of X.enemies || []) e.affixes = e.affixes || [];
+    // v3：一步一技
+    if (X.mv === undefined) { X.mv = 1; X.st = 1; X.bonus = 0; X.stepped = false; X.guard = 0; }
+    if (!X.fs) X.fs = { friendly: 0, pit: 0, maxTK: 0, strikeK: 0, moveK: 0 };
+    for (const id of Object.keys(X.cards || {})) if (!E.CARDS[X.cards[id].k]) X.cards[id].k = 'king';
     return X;
   }
   function enterRun() {
@@ -1428,7 +1517,7 @@
   document.addEventListener('keydown', (e) => {
     if (!overlay.hidden) { if (e.key === 'Escape' && overlayClosable) closeOverlay(); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key >= '1' && e.key <= '4') selectCard(+e.key - 1);
+    if (e.key >= '1' && e.key <= '6') selectCard(+e.key - 1);
     else if (e.key === ' ') { e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); doWait(); }
     else if (e.key === 'z' || e.key === 'Z') undo();
     else if (e.key === 'q' || e.key === 'Q') selectSkill(0);
